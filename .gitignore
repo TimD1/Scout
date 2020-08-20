@@ -1,0 +1,5 @@
+*.pyc
+venv3/
+*.egg-info/
+dist/
+build/
