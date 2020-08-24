@@ -98,7 +98,7 @@ def get_candidate_positions(region_start):
 
 
 
-def get_error_positions(error_catalogue, max_error_size):
+def get_error_positions(error_catalogue, max_error_size, start, end):
 
     # parse the error catalogue, creating a list of all SNP positions
     error_positions = []
@@ -122,7 +122,7 @@ def get_error_positions(error_catalogue, max_error_size):
             # append the start of this region to list of error positions
             error_positions.append(pos+1-(mod.args.base_window-1)//2)
 
-    return error_positions
+    return list(filter(lambda x: x >= start and x < end, error_positions))
 
 
 
@@ -195,17 +195,24 @@ def generate_training_data(cand_positions, error_positions):
 
     # limit ratio of actual errors to candidate positions for training
     np.random.shuffle(correct_positions)
-    correct_positions = correct_positions[:int(mod.args.max_error_ratio*len(error_positions))]
+    correct_positions = correct_positions[:mod.args.max_error_ratio*len(error_positions)]
 
     # merge actual errors with candidate errors
     positions = np.array(correct_positions + error_positions)
     truths = np.concatenate((np.zeros(len(correct_positions)), np.ones(len(error_positions))))
 
-    # shuffle together and limit data size, keeping track of ground truth
+    # shuffle together
     state = np.random.get_state()
+    np.random.set_state(state)
     np.random.shuffle(positions)
     np.random.set_state(state)
     np.random.shuffle(truths)
+
+    # limit data size, keeping track of ground truth
+    if len(truths) < mod.args.max_num_blocks:
+        print("WARNING: {} blocks requested, generating {}".\
+                format(mod.args.max_num_blocks, len(truths)))
+        mod.args.max_num_blocks = len(truths)
     positions = positions[:mod.args.max_num_blocks]
     truths = truths[:mod.args.max_num_blocks]
 
@@ -243,6 +250,7 @@ def validate_arguments():
     os.makedirs(mod.args.output_data_folder, exist_ok=True)
 
 
+
 def main(args):
 
     # validate arguments and make calculations if necessary
@@ -251,9 +259,9 @@ def main(args):
     validate_arguments()
 
     # get list of candidate positions with high recall, using pileup heuristics
-    print("> finding candidate positions")
     cand_positions = None
     if mod.args.use_existing_candidates:
+        print("> loading candidate positions")
         candidates_file = os.path.join(mod.args.output_data_folder, 'candidates.npy')
         if os.path.isfile(candidates_file):
             cand_positions = np.load(candidates_file)
@@ -261,6 +269,7 @@ def main(args):
             print("ERROR: candidates file '{}' does not exist.".format(candidates_file))
             sys.exit(-1)
     else:
+        print("> finding candidate positions")
         candidate_pool = mp.Pool()
         cand_positions = list(filter(None, candidate_pool.map(get_candidate_positions,
             list(range(mod.args.region_start, mod.args.region_end, mod.args.region_batch_size)))))
@@ -269,8 +278,11 @@ def main(args):
         np.save(os.path.join(mod.args.output_data_folder, 'candidates'), cand_positions)
 
     # get list of ground-truth (polishable) errors using pomoxis error catalogue
-    print("\n> retrieving known error positions")
-    error_positions = get_error_positions(mod.args.error_catalogue, mod.args.max_error_size)
+    print("> retrieving known error positions")
+    error_positions = get_error_positions(mod.args.error_catalogue, 
+            mod.args.max_error_size, mod.args.region_start, mod.args.region_end)
+    print("{} errors found in range {}-{}".format(len(error_positions), 
+            mod.args.region_start, mod.args.region_end))
     
     # generate training dataset
     print("> generating training data")
@@ -300,7 +312,7 @@ def argparser():
     # parameters for training dataset
     parser.add_argument("--base_window", default=21, type=int)
     parser.add_argument("--max_num_blocks", default=100000, type=int)
-    parser.add_argument("--max_error_ratio", default=20, type=float)
+    parser.add_argument("--max_error_ratio", default=20, type=int)
 
     # limit search to specific region
     parser.add_argument("--region_contig", default="chromosome")
