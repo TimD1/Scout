@@ -10,9 +10,12 @@ from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
 import multiprocessing as mp
 import numpy as np
 import re, os, sys
+import pysam
 
+# create a module-specific global to attach args to
+mod = sys.modules[__name__]
 
-# define global counters
+# define globals
 test_count = mp.Value('i', 0) # total positions to test
 cand_count = mp.Value('i', 0) # candidate positions selected
 pos_count = mp.Value('i', 0)  # positions actually selected
@@ -23,44 +26,43 @@ def get_candidate_positions(region_start):
     on the command-line constraints provided.'''
 
     # create pysam alignment file
-    calls_to_draft = pysam.AlignmentFile(args.calls_to_draft, "rb")
+    calls_to_draft = pysam.AlignmentFile(mod.args.calls_to_draft, "rb")
 
     # calculate region
-    center_col_start = region_start + (args.base_window-1)//2
+    center_col_start = region_start + (mod.args.base_window-1)//2
     center_col_end = center_col_start + \
-            min(args.region_batch_size, args.region_end-region_start)
+            min(mod.args.region_batch_size, mod.args.region_end-region_start)
 
     # select positions with sufficient error rate and depth
     positions = []
-    for center_col in calls_to_draft.pileup(args.region_contig, \
+    for center_col in calls_to_draft.pileup(mod.args.region_contig, \
             center_col_start, center_col_end, min_base_quality=1):
-        start_col = center_col.pos - (args.base_window-1)//2
+        start_col = center_col.pos - (mod.args.base_window-1)//2
 
         # only test pileups for positions within region
         if center_col.pos < center_col_start: continue
         if center_col.pos >= center_col_end: break
 
         # if this is a long homopolymer region, polish it no matter what
-        if args.pileup_min_homopolymer:
+        if mod.args.pileup_min_homopolymer:
 
             # grab reference chunk using read pileup
             for read in center_col.pileups:
                 pos = center_col.pos - read.alignment.reference_start
                 potential_hp = read.alignment.get_reference_sequence().upper() \
-                        [pos : pos + args.pileup_min_homopolymer]
+                        [pos : pos + mod.args.pileup_min_homopolymer]
                 break
 
             # check if it's a homopolymer
-            if len(potential_hp) == args.pileup_min_homopolymer and \
+            if len(potential_hp) == mod.args.pileup_min_homopolymer and \
                     len(set(potential_hp)) == 1:
-                if args.print_progress:
-                    with cand_count.get_lock(): 
-                        cand_count.value += 1
-                    with test_count.get_lock(): 
-                        test_count.value += 1
-                        sys.stderr.write('{} candidates selected, {:010d} of {} tested\r' \
-                                .format(cand_count.value, test_count.value,
-                                        args.region_end-args.region_start))
+                with cand_count.get_lock(): 
+                    cand_count.value += 1
+                with test_count.get_lock(): 
+                    test_count.value += 1
+                    sys.stderr.write('{} candidates selected, {:010d} of {} tested\r' \
+                            .format(cand_count.value, test_count.value,
+                                    mod.args.region_end-mod.args.region_start))
                 positions.append(start_col)
                 continue
 
@@ -75,23 +77,21 @@ def get_candidate_positions(region_start):
                 wrong += 1
 
         # if low error rate, continue
-        if wrong / float(center_col.nsegments) < args.pileup_min_error:
-            if args.print_progress:
-                with test_count.get_lock():
-                    test_count.value += 1
-                    sys.stderr.write('{} candidates selected, {:010d} of {} tested\r' \
-                            .format(cand_count.value, test_count.value, 
-                                args.region_end-args.region_start))
-            continue
-
-        if args.print_progress:
-            with cand_count.get_lock(): 
-                cand_count.value += 1
-            with test_count.get_lock(): 
+        if wrong / float(center_col.nsegments) < mod.args.pileup_min_error:
+            with test_count.get_lock():
                 test_count.value += 1
                 sys.stderr.write('{} candidates selected, {:010d} of {} tested\r' \
-                        .format(cand_count.value, test_count.value,
-                                args.region_end-args.region_start))
+                        .format(cand_count.value, test_count.value, 
+                            mod.args.region_end-mod.args.region_start))
+            continue
+
+        with cand_count.get_lock(): 
+            cand_count.value += 1
+        with test_count.get_lock(): 
+            test_count.value += 1
+            sys.stderr.write('{} candidates selected, {:010d} of {} tested\r' \
+                    .format(cand_count.value, test_count.value,
+                            mod.args.region_end-mod.args.region_start))
         positions.append(start_col)
 
     return positions
@@ -120,7 +120,7 @@ def get_error_positions(error_catalogue, max_error_size):
             if errs > max_error_size: continue
 
             # append the start of this region to list of error positions
-            error_positions.append(pos+1-(args.base_window-1)//2)
+            error_positions.append(pos+1-(mod.args.base_window-1)//2)
 
     return error_positions
 
@@ -128,54 +128,91 @@ def get_error_positions(error_catalogue, max_error_size):
 
 def generate_block(ref_start):
 
-    calls_to_draft = pysam.AlignmentFile(args.calls_to_draft, 'rb')
-    block = np.zeros( (args.base_window, 8, 4) )
-    ref_end = ref_start + args.base_window
+    # initialize training data block and encoding scheme
+    calls_to_draft = pysam.AlignmentFile(mod.args.calls_to_draft, 'rb')
+    block = np.zeros( (mod.args.base_window, 8, 4) )
+    ref_end = ref_start + mod.args.base_window
+    base_idx = {'A': 0, 'C': 1, 'G': 2, 'T': 3}
+    feat_idx = {'REF': 0, 'INS': 1, 'DEL': 2, 'SUB': 3}
 
-    for col in calls_to_draft.pileup(args.region_contig, 
+    for col in calls_to_draft.pileup(mod.args.region_contig, 
             ref_start, ref_end, min_base_quality=1):
 
-        if col < ref_start: continue
-        if col >= ref_end: break
+        # ignore columns outside of ROI
+        if col.pos < ref_start: continue
+        if col.pos >= ref_end: break
+        pos_offset = col.pos - ref_start
 
         for read in col.pileups:
+            strand_offset = 4 if read.alignment.is_reverse else 0
             ref_base = read.alignment.get_reference_sequence().upper() \
-                    [center_col.pos-read.alignment.reference_start]
+                    [col.pos-read.alignment.reference_start]
             read_base = 'N' if read.query_position is None else \
                     read.alignment.query_sequence[read.query_position]
-            if read_base != ref_base or read.indel > 0:
-                wrong += 1
-                
 
+            # deletion
+            if read_base == 'N':
+                block[pos_offset][base_idx[ref_base] + strand_offset][feat_idx['DEL']] += 1
+            else:
 
+                # insertion
+                if read.indel > 0:
+                    # add all inserted bases, which are skipped by ref col iteration
+                    inserted_bases = read.alignment.query_sequence \
+                            [read.query_position+1 : read.query_position+1+read.indel]
+                    for ins_base, ins_offset in zip(inserted_bases, range(1,read.indel+1)):
+                        # only worry about insertions within ROI
+                        if pos_offset + ins_offset >= mod.args.base_window:
+                            break
+                        block[pos_offset+ins_offset][base_idx[ins_base]+strand_offset][feat_idx['INS']] += 1
+
+                # substitution or correct
+                block[pos_offset][base_idx[ref_base]  + strand_offset][feat_idx['REF']] += 1
+                block[pos_offset][base_idx[read_base] + strand_offset][feat_idx['INS']] += 1
+                block[pos_offset][base_idx[ref_base]  + strand_offset][feat_idx['DEL']] += 1
+                block[pos_offset][base_idx[read_base] + strand_offset][feat_idx['SUB']] += 1
+
+    # features are relative to reference counts
+    for pos in range(mod.args.base_window):
+        for base in range(len(base_idx)*2):
+            block[pos][base][feat_idx['INS']] -= block[pos][base][feat_idx['REF']]
+            block[pos][base][feat_idx['DEL']] -= block[pos][base][feat_idx['REF']]
+            block[pos][base][feat_idx['SUB']] -= block[pos][base][feat_idx['REF']]
+
+    with pos_count.get_lock(): 
+        pos_count.value += 1
+        sys.stderr.write('{} of {} blocks generated\r' \
+                .format(pos_count.value, mod.args.max_num_blocks))
+
+    return block[np.newaxis,:]
 
 
 
 def generate_training_data(cand_positions, error_positions):
 
     # filter any actual errors from the candidate positions
-    not_error_positions = np.setdiff1d(cand_positions - error_positions)
+    correct_positions = list(set(cand_positions)-set(error_positions))
 
     # limit ratio of actual errors to candidate positions for training
-    np.random.shuffle(not_error_positions)
-    not_error_positions = not_error_positions[:args.max_error_ratio*len(error_positions)]
+    np.random.shuffle(correct_positions)
+    correct_positions = correct_positions[:int(mod.args.max_error_ratio*len(error_positions))]
 
     # merge actual errors with candidate errors
-    positions = np.array(not_error_positions + error_positions)
-    truths = np.concatenate(np.zeros(len(not_error_positions)), np.ones(len(error_positions)))
+    positions = np.array(correct_positions + error_positions)
+    truths = np.concatenate((np.zeros(len(correct_positions)), np.ones(len(error_positions))))
 
-    # shuffle together and limit examples, keeping track of ground truth
+    # shuffle together and limit data size, keeping track of ground truth
     state = np.random.get_state()
-    for array in (positions, truths):
-        np.random.set_state(state)
-        np.random.shuffle(array)
-        array = array[:args.max_num_blocks]
+    np.random.shuffle(positions)
+    np.random.set_state(state)
+    np.random.shuffle(truths)
+    positions = positions[:mod.args.max_num_blocks]
+    truths = truths[:mod.args.max_num_blocks]
 
     # generate the blocks for all positions
     block_pool = mp.Pool()
     blocks = list(block_pool.map(generate_block, positions))
-    valid_indices = [ block is not None for block in blocks ]
-    return blocks[valid_indices], truths[valid_indices]
+    return np.vstack(blocks), truths
 
 
 
@@ -188,52 +225,61 @@ def get_fasta(ref_fasta):
 
 def validate_arguments():
 
-    if not os.path.isfile(args.calls_to_draft):
-        print("ERROR: calls_to_draft '{}' does not exist.".format(args.calls_to_draft))
+    if not os.path.isfile(mod.args.calls_to_draft):
+        print("ERROR: calls_to_draft '{}' does not exist.".format(mod.args.calls_to_draft))
         sys.exit(-1)
 
-    if not os.path.isfile(args.draft_consensus):
-        print("ERROR: draft_consensus '{}' does not exist.".format(args.draft_consensus))
+    if not os.path.isfile(mod.args.draft_consensus):
+        print("ERROR: draft_consensus '{}' does not exist.".format(mod.args.draft_consensus))
         sys.exit(-1)
 
-    if not os.path.isfile(args.error_catalogue):
-        print("ERROR: error_catalogue '{}' does not exist.".format(args.error_catalogue))
+    if not os.path.isfile(mod.args.error_catalogue):
+        print("ERROR: error_catalogue '{}' does not exist.".format(mod.args.error_catalogue))
         sys.exit(-1)
 
-    if not args.region_end:
-        args.region_end = len(get_fasta(args.draft_consensus))
+    if not mod.args.region_end:
+        mod.args.region_end = len(get_fasta(mod.args.draft_consensus))
+
+    os.makedirs(mod.args.output_data_folder, exist_ok=True)
 
 
 def main(args):
 
     # validate arguments and make calculations if necessary
     print("> processing command-line arguments")
+    mod.args = args
     validate_arguments()
 
     # get list of candidate positions with high recall, using pileup heuristics
     print("> finding candidate positions")
     cand_positions = None
-    if args.use_existing_candidates:
-        cand_positions = np.load(os.path.join(args.output_data_folder, 'candidates'))
-    else
+    if mod.args.use_existing_candidates:
+        candidates_file = os.path.join(mod.args.output_data_folder, 'candidates.npy')
+        if os.path.isfile(candidates_file):
+            cand_positions = np.load(candidates_file)
+        else:
+            print("ERROR: candidates file '{}' does not exist.".format(candidates_file))
+            sys.exit(-1)
+    else:
         candidate_pool = mp.Pool()
         cand_positions = list(filter(None, candidate_pool.map(get_candidate_positions,
-            list(range(args.region_start, args.region_end, args.region_batch_size)))))
-        print("> saving candidate positions")
-        np.save(os.path.join(args.output_data_folder, 'candidates'), cand_positions)
+            list(range(mod.args.region_start, mod.args.region_end, mod.args.region_batch_size)))))
+        cand_positions = [item for sublist in cand_positions for item in sublist]
+        print("\n> saving candidate positions")
+        np.save(os.path.join(mod.args.output_data_folder, 'candidates'), cand_positions)
 
     # get list of ground-truth (polishable) errors using pomoxis error catalogue
-    print("> retrieving known error positions")
-    error_positions = get_error_positions(args.error_catalogue, args.max_error_size)
+    print("\n> retrieving known error positions")
+    error_positions = get_error_positions(mod.args.error_catalogue, mod.args.max_error_size)
     
     # generate training dataset
     print("> generating training data")
     blocks, truth = generate_training_data(cand_positions, error_positions)
 
     # save training dataset
-    print("> saving training data")
-    np.save(os.path.join(args.output_data_folder, 'blocks'), blocks)
-    np.save(os.path.join(args.output_data_folder, 'truth'), truth)
+    print("\n> saving training data")
+    np.save(os.path.join(mod.args.output_data_folder, 'blocks'), blocks)
+    np.save(os.path.join(mod.args.output_data_folder, 'truth'), truth)
 
 
 
@@ -263,8 +309,8 @@ def argparser():
     parser.add_argument("--region_batch_size", default=10000, type=int)
 
     # selecting candidate positions
-    parser.add_argument("--pileup_min_error", default=0.1, type=float)
-    parser.add_argument("--pileup_min_homopolymer", default=0.1, type=float)
+    parser.add_argument("--pileup_min_error", default=0.3, type=float)
+    parser.add_argument("--pileup_min_homopolymer", default=5, type=int)
     parser.add_argument("--use_existing_candidates", action="store_true")
 
     # selecting polish positions

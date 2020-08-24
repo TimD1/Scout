@@ -3,3 +3,4 @@ venv3/
 *.egg-info/
 dist/
 build/
+test/
