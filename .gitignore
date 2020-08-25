@@ -4,3 +4,4 @@ venv3/
 dist/
 build/
 test/
+scout/models

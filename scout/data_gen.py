@@ -9,7 +9,7 @@ $ scout data_gen reads_to_draft.bam draft_error_catalogue_db.txt data_folder/
 from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
 import multiprocessing as mp
 import numpy as np
-import re, os, sys
+import re, os, sys, toml
 import pysam
 
 # create a module-specific global to attach args to
@@ -247,8 +247,8 @@ def validate_arguments():
     if not mod.args.region_end:
         mod.args.region_end = len(get_fasta(mod.args.draft_consensus))
 
-    os.makedirs(mod.args.output_data_folder, exist_ok=True)
-
+    # keep here for later searches in output folder
+    os.makedirs(args.output_data_folder, exist_ok=True)
 
 
 def main(args):
@@ -260,9 +260,9 @@ def main(args):
 
     # get list of candidate positions with high recall, using pileup heuristics
     cand_positions = None
-    if mod.args.use_existing_candidates:
+    if args.use_existing_candidates:
         print("> loading candidate positions")
-        candidates_file = os.path.join(mod.args.output_data_folder, 'candidates.npy')
+        candidates_file = os.path.join(args.output_data_folder, 'candidates.npy')
         if os.path.isfile(candidates_file):
             cand_positions = np.load(candidates_file)
         else:
@@ -272,17 +272,17 @@ def main(args):
         print("> finding candidate positions")
         candidate_pool = mp.Pool()
         cand_positions = list(filter(None, candidate_pool.map(get_candidate_positions,
-            list(range(mod.args.region_start, mod.args.region_end, mod.args.region_batch_size)))))
+            list(range(args.region_start, args.region_end, args.region_batch_size)))))
         cand_positions = [item for sublist in cand_positions for item in sublist]
         print("\n> saving candidate positions")
-        np.save(os.path.join(mod.args.output_data_folder, 'candidates'), cand_positions)
+        np.save(os.path.join(args.output_data_folder, 'candidates'), cand_positions)
 
     # get list of ground-truth (polishable) errors using pomoxis error catalogue
     print("> retrieving known error positions")
-    error_positions = get_error_positions(mod.args.error_catalogue, 
-            mod.args.max_error_size, mod.args.region_start, mod.args.region_end)
+    error_positions = get_error_positions(args.error_catalogue, 
+            args.max_error_size, args.region_start, args.region_end)
     print("{} errors found in range {}-{}".format(len(error_positions), 
-            mod.args.region_start, mod.args.region_end))
+            args.region_start, args.region_end))
     
     # generate training dataset
     print("> generating training data")
@@ -290,8 +290,10 @@ def main(args):
 
     # save training dataset
     print("\n> saving training data")
-    np.save(os.path.join(mod.args.output_data_folder, 'blocks'), blocks)
-    np.save(os.path.join(mod.args.output_data_folder, 'truth'), truth)
+    argsdict = dict(data_gen = vars(args))
+    toml.dump({**argsdict}, open(os.path.join(args.output_data_folder, 'config.toml'), 'w'))
+    np.save(os.path.join(args.output_data_folder, 'blocks'), blocks)
+    np.save(os.path.join(args.output_data_folder, 'truth'), truth)
 
 
 
