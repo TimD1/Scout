@@ -29,11 +29,11 @@ def init(seed, device):
 
 
 class ChunkData:
-    def __init__(self, blocks, truth):
+    def __init__(self, blocks, targets):
         self.blocks = blocks.reshape((*blocks.shape[:-2],-1)).transpose((0,2,1))
-        self.truth = np.expand_dims(truth, (1,2))
+        self.targets = np.expand_dims(targets, (1,2))
     def __getitem__(self, i):
-        return (self.blocks[i], self.truth[i])
+        return (self.blocks[i], self.targets[i])
     def __len__(self):
         return len(self.blocks)
 

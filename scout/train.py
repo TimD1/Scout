@@ -108,14 +108,14 @@ def main(args):
     # load training data into np arrays
     print("> loading training data")
     blocks = np.load(os.path.join(args.data_dir, "blocks.npy"))
-    truth = np.load(os.path.join(args.data_dir, "truth.npy"))
+    targets = np.load(os.path.join(args.data_dir, "targets.npy"))
     blocks = blocks[:args.max_num_blocks]
-    truth = truth[:args.max_num_blocks]
+    targets = targets[:args.max_num_blocks].flatten()
 
     # split into torch-compatible train/test sets
     split = np.floor(blocks.shape[0] * args.validation_split).astype(np.int32)
-    train_dataset = ChunkData(blocks[:split], truth[:split])
-    test_dataset = ChunkData(blocks[split:], truth[split:])
+    train_dataset = ChunkData(blocks[:split], targets[:split])
+    test_dataset = ChunkData(blocks[split:], targets[split:])
     train_loader = torch.utils.data.DataLoader(train_dataset, 
             batch_size=args.batch, shuffle=True, num_workers=4, pin_memory=True)
     test_loader = torch.utils.data.DataLoader(test_dataset, 
@@ -124,17 +124,17 @@ def main(args):
     # load model config (architecture)
     print("> storing model & block params")
     config = toml.load(args.config)
-    argsdict = dict(training=vars(args))
+    argsdict = dict(training = vars(args))
 
     # load block config (data_gen parameters)
-    block_config = {}
-    block_config_file = os.path.join(args.data_dir, 'config.toml')
-    if os.path.isfile(block_config_file):
-        block_config = toml.load(os.path.join(block_config_file))
+    blocks_config = {}
+    blocks_config_file = os.path.join(args.data_dir, 'config.toml')
+    if os.path.isfile(blocks_config_file):
+        blocks_config = toml.load(blocks_config_file)
 
     # merge config data and save in training directory
     os.makedirs(workdir, exist_ok=True)
-    toml.dump({**config, **argsdict, **block_config}, open(os.path.join(workdir, 'config.toml'), 'w'))
+    toml.dump({**config, **argsdict, **blocks_config}, open(os.path.join(workdir, 'config.toml'), 'w'))
 
     # generate model from config file
     print("> loading model")

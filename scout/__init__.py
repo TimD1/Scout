@@ -1,7 +1,7 @@
 from argparse import ArgumentDefaultsHelpFormatter, ArgumentParser
 
-from scout import data_gen, plot_data, train, find
-modules = ['data_gen', 'plot_data', 'train', 'find']
+from scout import data_gen, plot_data, data_aug, train, find
+modules = ['data_gen', 'plot_data', 'data_aug', 'train', 'find']
 
 
 __version__ = '0.0.1'

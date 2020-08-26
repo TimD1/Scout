@@ -16,7 +16,7 @@ from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
 
 def main(args):
 
-    # sys.stderr.write("> loading model\n")
+    sys.stderr.write("> loading model\n")
 
     # model = load_model(
     #     args.model_directory, args.device, weights=int(args.weights),

@@ -199,27 +199,27 @@ def generate_training_data(cand_positions, error_positions):
 
     # merge actual errors with candidate errors
     positions = np.array(correct_positions + error_positions)
-    truths = np.concatenate((np.zeros(len(correct_positions)), np.ones(len(error_positions))))
+    targets = np.concatenate((np.zeros(len(correct_positions)), np.ones(len(error_positions))))
 
     # shuffle together
     state = np.random.get_state()
     np.random.set_state(state)
     np.random.shuffle(positions)
     np.random.set_state(state)
-    np.random.shuffle(truths)
+    np.random.shuffle(targets)
 
     # limit data size, keeping track of ground truth
-    if len(truths) < mod.args.max_num_blocks:
+    if len(targets) < mod.args.max_num_blocks:
         print("WARNING: {} blocks requested, generating {}".\
-                format(mod.args.max_num_blocks, len(truths)))
-        mod.args.max_num_blocks = len(truths)
+                format(mod.args.max_num_blocks, len(targets)))
+        mod.args.max_num_blocks = len(targets)
     positions = positions[:mod.args.max_num_blocks]
-    truths = truths[:mod.args.max_num_blocks]
+    targets = targets[:mod.args.max_num_blocks]
 
     # generate the blocks for all positions
     block_pool = mp.Pool()
     blocks = list(block_pool.map(generate_block, positions))
-    return np.vstack(blocks), truths
+    return np.vstack(blocks), targets
 
 
 
@@ -286,14 +286,14 @@ def main(args):
     
     # generate training dataset
     print("> generating training data")
-    blocks, truth = generate_training_data(cand_positions, error_positions)
+    blocks, target = generate_training_data(cand_positions, error_positions)
 
     # save training dataset
     print("\n> saving training data")
     argsdict = dict(data_gen = vars(args))
     toml.dump({**argsdict}, open(os.path.join(args.output_data_folder, 'config.toml'), 'w'))
     np.save(os.path.join(args.output_data_folder, 'blocks'), blocks)
-    np.save(os.path.join(args.output_data_folder, 'truth'), truth)
+    np.save(os.path.join(args.output_data_folder, 'targets'), target)
 
 
 

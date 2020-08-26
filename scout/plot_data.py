@@ -23,11 +23,11 @@ def validate(args):
 
 
 
-def plot(blocks, truth, plot_folder, max_plots):
+def plot(blocks, targets, plot_folder, max_plots):
 
     # randomly select data to plot
-    max_plots = min(max_plots, truth.shape[0])
-    indices = random.sample(range(truth.shape[0]), max_plots)
+    max_plots = min(max_plots, targets.shape[0])
+    indices = random.sample(range(targets.shape[0]), max_plots)
     titles = ['REF', 'INS', 'DEL', 'SUB']
     maxval = np.max(blocks)
     minval = np.min(blocks)
@@ -47,11 +47,11 @@ def plot(blocks, truth, plot_folder, max_plots):
             axs[x,y].set_yticks(range(8))
             axs[x,y].set_yticklabels(['A','C','G','T',"A'","C'","G'","T'"])
             axs[x,y].set_title(titles[plot])
-        plt.suptitle('Block {} was {}'.format(idx, 'error' if truth[idx] else 'correct'))
+        plt.suptitle('Block {} was {}'.format(idx, 'error' if targets[idx] else 'correct'))
         if first:
             first = False
             plt.colorbar(im, ax=axs.ravel().tolist(), shrink=0.5)
-        plt.savefig(os.path.join(plot_folder, '{}_{}.png'.format(idx, int(truth[idx]))))
+        plt.savefig(os.path.join(plot_folder, '{}_{}.png'.format(idx, int(targets[idx]))))
 
 
 
@@ -62,10 +62,10 @@ def main(args):
 
     print("> loading data")
     blocks = np.load(os.path.join(args.train_data_folder, 'blocks.npy'))
-    truth = np.load(os.path.join(args.train_data_folder, 'truth.npy'))
+    targets = np.load(os.path.join(args.train_data_folder, 'targets.npy'))
 
     print("> plotting data")
-    plot(blocks, truth, args.plot_folder, args.max_plots)
+    plot(blocks, targets, args.plot_folder, args.max_plots)
 
 
 
