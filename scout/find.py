@@ -12,68 +12,77 @@ from datetime import timedelta
 import numpy as np 
 from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
 
+import scout.config as cfg
+from scout.util import load_model, get_fasta
+from scout.blocks import *
+
+
+def validate(args):
+
+    if not os.path.isfile(args.calls_to_draft):
+        print("ERROR: calls_to_draft '{}' does not exist.".format(args.calls_to_draft))
+        sys.exit(-1)
+
+    if not args.region_end:
+        args.region_end = len(get_fasta(args.draft_consensus))
+
+    os.makedirs(args.output_dir, exist_ok=True)
+    cfg.args = args
+
 
 
 def main(args):
 
-    sys.stderr.write("> loading model\n")
+    # validate arguments and store them
+    print("> processing command-line arguments")
+    validate(args)
 
-    # model = load_model(
-    #     args.model_directory, args.device, weights=int(args.weights),
-    #     half=args.half, chunksize=args.chunksize, use_rt=args.cudart,
-    # )
+    # load model from disk
+    print("> loading model")
+    model = load_model(args.model_directory, args.device, 
+            weights=int(args.weights), half=args.half)
 
-    # samples = 0
-    # num_reads = 0
-    # max_read_size = 4e6
-    # dtype = np.float16 if args.half else np.float32
+    # pre-filtering using basic pileup heuristics
+    cand_positions = get_candidate_positions()
 
-    # t0 = time.perf_counter() 
-    # sys.stderr.write("> calling\n")
+    # use model to select positions to polish
+    chosen_positions = choose_positions(cand_positions, model, args.device)
 
-    # with torch.no_grad():
-
-    #     while True:
-
-    #         read = reader.queue.get()
-    #         if read is None: 
-    #             break
-
-    #         if len(read.signal) > max_read_size: 
-    #             sys.stderr.write("> skipping long read %s (%s samples)\n" % (read.read_id, len(read.signal)))
-    #             continue 
-
-    #         num_reads += 1 
-    #         samples += len(read.signal)
-
-    #         raw_data = torch.tensor(read.signal.astype(dtype)) 
-    #         chunks = chunk(raw_data, args.chunksize, args.overlap) 
-
-    #         posteriors = model(chunks.to(args.device)).cpu().numpy() 
-    #         posteriors = stitch(posteriors, args.overlap // model.stride // 2) 
-
-    #         writer.queue.put((read, posteriors[:raw_data.shape[0]])) 
-
-    # duration = time.perf_counter() - t0
-
-    # sys.stderr.write("> completed reads: %s\n" % num_reads)
-    # sys.stderr.write("> duration: %s\n" % timedelta(seconds=np.round(duration))) 
-    # sys.stderr.write("> samples per second %.1E\n" % (samples / duration)) 
-    # sys.stderr.write("> done\n") 
+    print("\n>saving results")
+    np.save(os.path.join(args.output_dir, "positions"), chosen_positions)
 
 
 
 def argparser():
 
+    # initialize parser
     parser = ArgumentParser(
         formatter_class = ArgumentDefaultsHelpFormatter,
         add_help = False
     )
 
-    parser.add_argument("pileup_bam", default="")
-    parser.add_argument("model_directory", default="")
-    parser.add_argument("locations_out_dir", default="locations")
+    # i/o arguments
+    parser.add_argument("calls_to_draft")
+    parser.add_argument("draft_consensus")
+    parser.add_argument("output_dir")
+
+    # limit search to specific region
+    parser.add_argument("--region_contig", default="chromosome",)
+    parser.add_argument("--region_start", default=0, type=int)
+    parser.add_argument("--region_end", default=0, type=int)
+    parser.add_argument("--region_batch_size", default=10000, type=int)
+
+    # selecting candidate positions
+    parser.add_argument("--base_window", default=21, type=int)
+    parser.add_argument("--pileup_min_error", default=0.3, type=float)
+    parser.add_argument("--pileup_min_hp", default=5, type=int)
+    parser.add_argument("--use_existing_candidates", action="store_true")
+
+    # model arguments
+    parser.add_argument("--model_directory", default="dna_r941_21bp")
     parser.add_argument("--device", default="cuda")
+    parser.add_argument("--seed", default=42, type=int)
+    parser.add_argument("--batch_size", default=32, type=int)
     parser.add_argument("--weights", default="0", type=str)
     parser.add_argument("--half", action="store_true", default=False)
 
