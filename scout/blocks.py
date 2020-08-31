@@ -241,7 +241,7 @@ def generate_training_data(cand_positions, error_positions):
 
 
 
-def choose_positions(cand_positions, model, device):
+def call_error_probs(cand_positions, model, device):
 
     # initialize device and model
     model.eval()
@@ -264,15 +264,15 @@ def choose_positions(cand_positions, model, device):
 
     # determine whether candidates are worth polishing
     print("\n> calling blocks")
-    results = np.zeros(len(cand_positions), dtype=bool)
+    results = np.zeros(len(cand_positions))
     called = 0
     with torch.no_grad():
         for block in data_loader:
             block = block.to(device)
             result = model(block)
             results[called:called+len(block)] = \
-                    (torch.sigmoid(result) > 0.5).cpu().numpy().flatten()
+                    torch.sigmoid(result).cpu().numpy().flatten()
             called += len(block)
             print("{} blocks called\r".format(called), end="")
 
-    return np.array(cand_positions)[results]
+    return results

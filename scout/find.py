@@ -46,7 +46,8 @@ def main(args):
     cand_positions = get_candidate_positions()
 
     # use model to select positions to polish
-    chosen_positions = choose_positions(cand_positions, model, args.device)
+    error_probs = call_error_probs(cand_positions, model, args.device)
+    chosen_positions = cand_positions[error_probs > args.threshold]
 
     print("\n>saving results")
     np.save(os.path.join(args.output_dir, "positions"), chosen_positions)
@@ -84,6 +85,7 @@ def argparser():
     parser.add_argument("--seed", default=42, type=int)
     parser.add_argument("--batch_size", default=32, type=int)
     parser.add_argument("--weights", default="0", type=str)
+    parser.add_argument("--threshold", default=0.5, type=float)
     parser.add_argument("--half", action="store_true", default=False)
 
     return parser

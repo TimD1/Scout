@@ -8,7 +8,7 @@ $ scout find reads_to_draft.bam model_dir
 
 import sys, time, torch, os
 from datetime import timedelta 
-
+import matplotlib.pyplot as plt
 import numpy as np 
 from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
 
@@ -76,6 +76,29 @@ def count_useful(cand_pos, error_pos):
 
 
 
+def plot_prec_recall(cand_pos, error_probs, error_pos):
+
+    prec = []
+    recall = []
+    thresholds = np.linspace(0, 1, 101)
+    cand_errors, good_cand_pos = count_useful(cand_pos, error_pos)
+    for threshold in thresholds:
+        polish_pos = np.array(cand_pos)[error_probs > threshold]
+        polish_errors, good_polish_pos = count_useful(polish_pos, error_pos)
+        recall.append(100 if not cand_errors else polish_errors*100.0 / cand_errors)
+        prec.append(100 if not len(polish_pos) else good_polish_pos*100.0 / len(polish_pos))
+
+    plt.plot(recall, prec)
+    plt.grid(True)
+    plt.xlabel('Recall')
+    plt.ylabel('Precision')
+    plt.xticks(range(0,101,10))
+    plt.yticks(range(0,101,10))
+    plt.savefig(os.path.join(cfg.args.output_dir, "prec_recall.png"))
+
+
+
+
 def print_stats(error_pos, cand_pos, polish_pos):
 
     # count useful positions and errors retained
@@ -136,10 +159,12 @@ def main(args):
     cand_positions = get_candidate_positions()
 
     # use model to select positions to polish
-    polish_positions = choose_positions(cand_positions, model, args.device)
+    error_probs = call_error_probs(cand_positions, model, args.device)
+    polish_positions = np.array(cand_positions)[error_probs > args.threshold]
 
     # print statistics to evaluate candidate heuristic and model
     print("> calculating summary statistics")
+    plot_prec_recall(cand_positions, error_probs, error_positions)
     print_stats(error_positions, cand_positions, polish_positions)
 
 
@@ -178,6 +203,7 @@ def argparser():
     parser.add_argument("--seed", default=42, type=int)
     parser.add_argument("--batch_size", default=32, type=int)
     parser.add_argument("--weights", default="0", type=str)
+    parser.add_argument("--threshold", default=0.5, type=float)
     parser.add_argument("--half", action="store_true", default=False)
 
     return parser
