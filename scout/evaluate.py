@@ -23,8 +23,13 @@ def validate(args):
         print("ERROR: calls_to_draft '{}' does not exist.".format(args.calls_to_draft))
         sys.exit(-1)
 
+    # set region to search for errors, ignoring genome start/end
+    args.base_radius = (args.base_window-1) // 2
+    genome_end = len(get_fasta(args.draft_consensus))
     if not args.region_end:
-        args.region_end = len(get_fasta(args.draft_consensus))
+        args.region_end = genome_end - args.base_radius
+    args.region_end = min(args.region_end, genome_end - args.base_radius)
+    args.region_start = max(args.region_start, args.base_radius)
 
     os.makedirs(args.output_dir, exist_ok=True)
     cfg.args = args
@@ -39,6 +44,7 @@ def count_useful(cand_pos, error_pos):
     pol_idx = 0
     polished_error = 0
     good_cand_pos = 0
+    radius = (cfg.args.merge_center - 1) // 2
 
     # iterate over each polished position
     while pol_idx < len(cand_pos):
@@ -52,8 +58,8 @@ def count_useful(cand_pos, error_pos):
             err_idx += 1
 
         # we successfully polished some errors
-        elif error_pos[err_idx] >= cand_pos[pol_idx] and \
-                error_pos[err_idx] < cand_pos[pol_idx] + cfg.args.merge_center:
+        elif error_pos[err_idx] >= cand_pos[pol_idx]-radius and \
+                error_pos[err_idx] <= cand_pos[pol_idx]+radius:
 
             # this chosen position is correct, we polished at least one error
             good_cand_pos += 1
@@ -63,7 +69,7 @@ def count_useful(cand_pos, error_pos):
 
             # count how many errors we polished
             if err_idx >= len(error_pos): break
-            while error_pos[err_idx] < cand_pos[pol_idx-1] + cfg.args.merge_center:
+            while error_pos[err_idx] <= cand_pos[pol_idx-1]+radius:
                 err_idx += 1
                 polished_error += 1
                 if err_idx >= len(error_pos): break

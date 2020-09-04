@@ -23,8 +23,13 @@ def validate(args):
         print("ERROR: calls_to_draft '{}' does not exist.".format(args.calls_to_draft))
         sys.exit(-1)
 
+    # set region to search for errors, ignoring genome start/end
+    args.base_radius = (args.base_window-1) // 2
+    genome_end = len(get_fasta(args.draft_consensus))
     if not args.region_end:
-        args.region_end = len(get_fasta(args.draft_consensus))
+        args.region_end = genome_end - args.base_radius
+    args.region_end = min(args.region_end, genome_end - args.base_radius)
+    args.region_start = max(args.region_start, args.base_radius)
 
     os.makedirs(args.output_dir, exist_ok=True)
     cfg.args = args

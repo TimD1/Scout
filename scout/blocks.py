@@ -7,23 +7,26 @@ import scout.config as cfg
 from scout.util import *
 
 
-def find_candidate_positions(region_start):
-    ''' Return list of all positions to generate training data for, based
-    on the command-line constraints provided.'''
+def find_candidate_positions(center_col_start):
+    '''
+    Return list of all positions to generate training data for, based
+    on the command-line constraints provided.
+    '''
 
     # create pysam alignment file
     calls_to_draft = pysam.AlignmentFile(cfg.args.calls_to_draft, "rb")
 
-    # calculate region
-    center_col_start = region_start + (cfg.args.base_window-1)//2
-    center_col_end = center_col_start + \
-            min(cfg.args.region_batch_size, cfg.args.region_end-region_start)
+    # calculate region end
+    center_col_end = min(center_col_start + cfg.args.region_batch_size, cfg.args.region_end)
+
+    # shift to 1-based indexing for pysam
+    center_col_start += 1
+    center_col_end += 1
 
     # select positions with sufficient error rate and depth
     positions = []
     for center_col in calls_to_draft.pileup(cfg.args.region_contig, \
             center_col_start, center_col_end, min_base_quality=1):
-        start_col = center_col.pos - (cfg.args.base_window-1)//2
 
         # only test pileups for positions within region
         if center_col.pos < center_col_start: continue
@@ -49,7 +52,7 @@ def find_candidate_positions(region_start):
                     sys.stderr.write('{} candidates selected, {:010d} of {} tested\r' \
                             .format(cfg.cand_count.value, cfg.test_count.value,
                                     cfg.args.region_end-cfg.args.region_start))
-                positions.append(start_col)
+                positions.append(center_col.pos-1) # back to 0-based indexing
                 continue
 
         # check percentage of reads which err at this position
@@ -71,6 +74,7 @@ def find_candidate_positions(region_start):
                             cfg.args.region_end-cfg.args.region_start))
             continue
 
+        # passed min error threshold, update number of candidates selected
         with cfg.cand_count.get_lock(): 
             cfg.cand_count.value += 1
         with cfg.test_count.get_lock(): 
@@ -78,7 +82,7 @@ def find_candidate_positions(region_start):
             sys.stderr.write('{} candidates selected, {:010d} of {} tested\r' \
                     .format(cfg.cand_count.value, cfg.test_count.value,
                             cfg.args.region_end-cfg.args.region_start))
-        positions.append(start_col)
+        positions.append(center_col.pos-1) # back to 0-based indexing
 
     return positions
 
@@ -136,7 +140,7 @@ def get_error_positions(error_catalogue, max_error_size, start, end):
             if errs > max_error_size: continue
 
             # append the start of this region to list of error positions
-            error_positions.append(pos+1-(cfg.args.base_window-1)//2)
+            error_positions.append(pos-1) # back to 0-based indexing
 
     # return error positions within range
     results = list(filter(lambda x: x >= start and x < end, error_positions))
@@ -146,11 +150,12 @@ def get_error_positions(error_catalogue, max_error_size, start, end):
 
 
 
-def generate_block(ref_start):
+def generate_block(block_center):
 
     # initialize training data block and encoding scheme
     calls_to_draft = pysam.AlignmentFile(cfg.args.calls_to_draft, 'rb')
     block = np.zeros( (cfg.args.base_window, 8, 4) )
+    ref_start = block_center - cfg.args.base_radius + 1 # to pysam 1-based indexing
     ref_end = ref_start + cfg.args.base_window
     base_idx = {'A': 0, 'C': 1, 'G': 2, 'T': 3}
     feat_idx = {'REF': 0, 'INS': 1, 'DEL': 2, 'SUB': 3}
