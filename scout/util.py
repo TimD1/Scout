@@ -62,6 +62,8 @@ class ChunkBlock:
 
 def load_model(dirname, device, weights=None, half=False):
 
+    print("> loading model")
+
     # search for model in model directory if not found elsewhere
     if not os.path.isdir(dirname) and os.path.isdir(os.path.join(__models__, dirname)):
         dirname = os.path.join(__models__, dirname)

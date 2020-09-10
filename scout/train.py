@@ -124,7 +124,7 @@ def main(args):
     # load model config (architecture)
     print("> storing model & block params")
     config = toml.load(args.config)
-    argsdict = dict(training = vars(args))
+    argsdict = dict(train = vars(args))
 
     # load block config (data_gen parameters)
     blocks_config = {}

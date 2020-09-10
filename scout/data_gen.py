@@ -9,12 +9,13 @@ $ scout data_gen reads_to_draft.bam draft_error_catalogue_db.txt data_folder/
 from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
 import multiprocessing as mp
 import numpy as np
-import re, os, sys, toml
-import pysam
+import re, os, sys, toml, pysam
 
-import scout.config as cfg
 from scout.blocks import *
 from scout.util import get_fasta
+
+try: import grouper.config as cfg
+except: import scout.config as cfg
 
 
 def validate(args):
@@ -30,6 +31,11 @@ def validate(args):
     if not os.path.isfile(args.error_catalogue):
         print("ERROR: error_catalogue '{}' does not exist.".format(args.error_catalogue))
         sys.exit(-1)
+
+    # set default contig using alignment file
+    if args.region_contig == "default":
+        calls_to_draft = pysam.AlignmentFile(args.calls_to_draft, "rb")
+        args.region_contig = calls_to_draft.references[0]
 
     # set region to search for errors, ignoring genome start/end
     args.base_radius = (args.base_window-1) // 2
@@ -54,8 +60,7 @@ def main(args):
 
     # get list of ground-truth (polishable) errors using pomoxis error catalogue
     print("> retrieving known error positions")
-    error_positions = get_error_positions(args.error_catalogue, 
-            args.max_error_size, args.region_start, args.region_end)
+    error_positions = get_error_positions(args.error_catalogue)
     
     # generate training dataset
     print("> generating training data")
@@ -90,13 +95,13 @@ def argparser():
     parser.add_argument("--max_error_ratio", default=20, type=int)
 
     # limit search to specific region
-    parser.add_argument("--region_contig", default="chromosome")
+    parser.add_argument("--region_contig", default="default")
     parser.add_argument("--region_start", default=0, type=int)
     parser.add_argument("--region_end", default=0, type=int)
     parser.add_argument("--region_batch_size", default=10000, type=int)
 
     # selecting candidate positions
-    parser.add_argument("--pileup_min_error", default=0.3, type=float)
+    parser.add_argument("--pileup_min_error", default=0.2, type=float)
     parser.add_argument("--pileup_min_hp", default=5, type=int)
     parser.add_argument("--use_existing_candidates", action="store_true")
 

@@ -18,7 +18,7 @@ Priority: optional
 Architecture: amd64
 	Depends: python3
 Maintainer: Tim Dunn <me.timd1@gmail.com>
-	Description: Pileup Position Picker
+	Description: Scout Candidate Variant Finder
 	endef
 	export DEB_CONTROL
 

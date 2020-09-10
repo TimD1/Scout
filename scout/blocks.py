@@ -1,16 +1,16 @@
 import multiprocessing as mp
 import numpy as np
-import re, os, sys, toml
-import pysam, torch
+import re, os, sys, toml, pysam, torch, h5py
 
-import scout.config as cfg
+try: import grouper.config as cfg
+except: import scout.config as cfg
 from scout.util import *
 
 
-def find_candidate_positions(center_col_start):
+def get_pileup_positions(center_col_start):
     '''
-    Return list of all positions to generate training data for, based
-    on the command-line constraints provided.
+    Returns list of all pileup positions exceeding minimum error rate or 
+    homopolymer length.
     '''
 
     # create pysam alignment file
@@ -18,10 +18,6 @@ def find_candidate_positions(center_col_start):
 
     # calculate region end
     center_col_end = min(center_col_start + cfg.args.region_batch_size, cfg.args.region_end)
-
-    # shift to 1-based indexing for pysam
-    center_col_start += 1
-    center_col_end += 1
 
     # select positions with sufficient error rate and depth
     positions = []
@@ -52,7 +48,7 @@ def find_candidate_positions(center_col_start):
                     sys.stderr.write('{} candidates selected, {:010d} of {} tested\r' \
                             .format(cfg.cand_count.value, cfg.test_count.value,
                                     cfg.args.region_end-cfg.args.region_start))
-                positions.append(center_col.pos-1) # back to 0-based indexing
+                positions.append(center_col.pos)
                 continue
 
         # check percentage of reads which err at this position
@@ -82,18 +78,121 @@ def find_candidate_positions(center_col_start):
             sys.stderr.write('{} candidates selected, {:010d} of {} tested\r' \
                     .format(cfg.cand_count.value, cfg.test_count.value,
                             cfg.args.region_end-cfg.args.region_start))
-        positions.append(center_col.pos-1) # back to 0-based indexing
+        positions.append(center_col.pos)
 
     return positions
+
+
+
+def medaka_stitch(hdf5_filename):
+    '''
+    Written as test to ensure Medaka's consensus_probs.hdf5 is parsed correctly.
+    '''
+
+    # sort regions in HDF5 file by chromosomal position  
+    code = ['', 'A', 'C', 'G', 'T']
+    hdf5_file = h5py.File(hdf5_filename, 'r')
+    regions = [ r for r in hdf5_file['samples']['data'] ]
+    starts = []  
+    for r in regions:
+        pos = re.search('chromosome:(.*)-(.*)', r).group(1)  
+        starts.append(float(pos))
+    regions = [r for p,r in sorted(zip(starts,regions))] 
+
+    # stitch together consensus
+    consensus = ""
+    for idx, region in enumerate(regions):   
+        probs = hdf5_file['samples']['data'][region]['label_probs'][:]   
+        first_pos = hdf5_file['samples']['data'][region]['positions'][0]
+        last_pos = hdf5_file['samples']['data'][region]['positions'][-1]
+        start = None
+        end = None
+
+        # get start index within this chunk
+        if idx == 0:
+            start = 0
+        else:
+            prev_positions = hdf5_file['samples']['data'][regions[idx-1]]['positions'][:]
+            start = (args.chunk_size - np.where(prev_positions == first_pos)[0]).squeeze() // 2
+
+        # get end index within this chunk
+        if idx == len(regions)-1:
+            end = args.chunk_size
+        else:
+            next_positions = hdf5_file['samples']['data'][regions[idx+1]]['positions'][:]
+            end = args.chunk_size-1 - np.where(next_positions == last_pos)[0].squeeze() // 2
+        probs = probs[start:end, :]  
+        for chunk_idx in range(probs.shape[0]):
+            consensus += code[np.argmax(probs[chunk_idx,:])]
+
+    return consensus
+
+
+
+def get_medaka_positions(hdf5_filename):
+
+    # sort regions in HDF5 file by chromosomal position  
+    hdf5_file = h5py.File(hdf5_filename, 'r')
+    regions = [ r for r in hdf5_file['samples']['data'] ]
+    starts = []  
+    for r in regions:
+        pos = re.search('chromosome:(.*)-(.*)', r).group(1)  
+        starts.append(float(pos))
+    regions = [r for p,r in sorted(zip(starts,regions))] 
+    
+    # report difficult positions, keeping running total of consensus length  
+    position = 0 
+    difficult_positions = [] 
+    for idx, region in enumerate(regions):   
+        
+        # get confidence scores  
+        probs = hdf5_file['samples']['data'][region]['label_probs'][:]   
+        error_probs = np.clip(1-np.max(probs, axis=1), 0.00001, 1)   
+        qscores = -10*np.log10(error_probs)  
+        first_pos = hdf5_file['samples']['data'][region]['positions'][0]
+        last_pos = hdf5_file['samples']['data'][region]['positions'][-1]
+        medaka_chunk_size = 10000
+        start, end = None, None
+
+        # get start index within this chunk
+        if idx == 0:
+            start = 0
+        else:
+            prev_positions = hdf5_file['samples']['data'][regions[idx-1]]['positions'][:]
+            start = (medaka_chunk_size - np.where(prev_positions == first_pos)[0]).squeeze() // 2
+
+        # get end index within this chunk
+        if idx == len(regions)-1:
+            end = medaka_chunk_size
+        else:
+            next_positions = hdf5_file['samples']['data'][regions[idx+1]]['positions'][:]
+            end = medaka_chunk_size-1 - np.where(next_positions == last_pos)[0].squeeze() // 2
+        
+        # trim
+        probs = probs[start:end, :]  
+        qscores = qscores[start:end] 
+        
+        # report difficult positions 
+        for chunk_idx in range(len(qscores)):
+            if qscores[chunk_idx] <= cfg.args.max_qscore_medaka: 
+                difficult_positions.append(position) 
+            if np.argmax(probs[chunk_idx,:]):
+                position += 1
+
+    results = list(filter(lambda x: x >= cfg.args.region_start and 
+                x < cfg.args.region_end, difficult_positions))
+    return results
 
 
 
 def get_candidate_positions():
 
     cand_positions = None
+    cfg.cand_count.value = 0
+    cfg.test_count.value = 0
     if cfg.args.use_existing_candidates:
 
-        print("> loading candidate positions")
+        print("> loading candidate pileup positions")
         candidates_file = os.path.join(cfg.args.output_dir, 'candidates.npy')
 
         if os.path.isfile(candidates_file):
@@ -103,12 +202,11 @@ def get_candidate_positions():
             sys.exit(-1)
 
     else:
-        print("> finding candidate positions")
-        candidate_pool = mp.Pool()
-        cand_positions = list(filter(None, candidate_pool.map(
-            find_candidate_positions, 
-            list(range(cfg.args.region_start, cfg.args.region_end, 
-                cfg.args.region_batch_size)))))
+        print("> finding candidate pileup positions")
+        with mp.Pool() as pool:
+            cand_positions = list(filter(None, pool.map(get_pileup_positions, 
+                list(range(cfg.args.region_start, cfg.args.region_end, 
+                    cfg.args.region_batch_size)))))
         cand_positions = [item for sublist in cand_positions for item in sublist]
 
         print("\n> saving candidate positions")
@@ -118,9 +216,10 @@ def get_candidate_positions():
 
 
 
-def get_error_positions(error_catalogue, max_error_size, start, end):
+def get_error_positions(error_catalogue):
 
     # parse the error catalogue, creating a list of all SNP positions
+    print("> loading known error positions")
     error_positions = []
     with open(error_catalogue, 'r') as error_stats_file:
         header = True
@@ -137,13 +236,14 @@ def get_error_positions(error_catalogue, max_error_size, start, end):
 
             # we can't polish large structural variants, so don't even try
             errs = max(int(fields[8]), int(fields[9]), int(fields[10]))
-            if errs > max_error_size: continue
+            if errs > cfg.args.max_error_size: continue
 
             # append the start of this region to list of error positions
-            error_positions.append(pos-1) # back to 0-based indexing
+            error_positions.append(pos)
 
     # return error positions within range
-    results = list(filter(lambda x: x >= start and x < end, error_positions))
+    results = list(filter(lambda x: x >= cfg.args.region_start and 
+                x < cfg.args.region_end, error_positions))
     print("{} errors found in range {}-{}".format(len(results),
         cfg.args.region_start, cfg.args.region_end))
     return results
@@ -155,7 +255,7 @@ def generate_block(block_center):
     # initialize training data block and encoding scheme
     calls_to_draft = pysam.AlignmentFile(cfg.args.calls_to_draft, 'rb')
     block = np.zeros( (cfg.args.base_window, 8, 4) )
-    ref_start = block_center - cfg.args.base_radius + 1 # to pysam 1-based indexing
+    ref_start = block_center - cfg.args.base_radius
     ref_end = ref_start + cfg.args.base_window
     base_idx = {'A': 0, 'C': 1, 'G': 2, 'T': 3}
     feat_idx = {'REF': 0, 'INS': 1, 'DEL': 2, 'SUB': 3}
@@ -240,13 +340,13 @@ def generate_training_data(cand_positions, error_positions):
     targets = targets[:cfg.args.max_num_blocks]
 
     # generate the blocks for all positions
-    block_pool = mp.Pool()
-    blocks = list(block_pool.map(generate_block, positions))
+    with mp.Pool() as pool:
+        blocks = list(pool.map(generate_block, positions))
     return np.vstack(blocks), targets
 
 
 
-def call_error_probs(cand_positions, model, device):
+def get_pileup_scout_error_probs(cand_positions, model, device):
 
     # initialize device and model
     model.eval()
@@ -256,8 +356,8 @@ def call_error_probs(cand_positions, model, device):
 
     # generate all candidate blocks and merge
     print("> generating blocks")
-    choose_pool = mp.Pool()
-    cand_blocks = choose_pool.map(generate_block, cand_positions)
+    with mp.Pool() as pool:
+        cand_blocks = pool.map(generate_block, cand_positions)
     cand_blocks = np.vstack([block.astype(dtype) for block in cand_blocks])
 
     # chunk all blocks in to batches
