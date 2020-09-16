@@ -97,6 +97,7 @@ def main(args):
 
     # check that training directory doesn't exist already
     workdir = os.path.expanduser(args.train_dir)
+    model_name = os.path.basename(os.path.normpath(args.train_dir))
     if os.path.exists(workdir) and not args.force:
         print("ERROR: train_dir '{}' exists, use -f to force training.".format(workdir))
         exit(1)
@@ -167,8 +168,8 @@ def main(args):
             break
 
         # print and save intermediate results
-        print("[epoch {}] directory={} loss={:.4f} val_acc={:.3f}% val_prec={:.3f}% val_rec={:.3f}%".format(
-            epoch, workdir, val_loss, val_acc, val_prec, val_rec))
+        print("[epoch {}] model={} loss={:.4f} val_acc={:.3f}% val_prec={:.3f}% val_rec={:.3f}%".format(
+            epoch, model_name, val_loss, val_acc, val_prec, val_rec))
         model_state = model.state_dict() if not args.multi_gpu else model.module.state_dict()
         torch.save(model_state, os.path.join(workdir, "weights_%s.tar" % epoch))
         torch.save(optimizer.state_dict(), os.path.join(workdir, "optim_%s.tar" % epoch))

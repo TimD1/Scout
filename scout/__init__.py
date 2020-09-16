@@ -4,7 +4,7 @@ from scout import data_gen, plot_data, data_aug, train, find, evaluate
 modules = ['data_gen', 'plot_data', 'data_aug', 'train', 'find', 'evaluate']
 
 
-__version__ = '0.0.1'
+__version__ = '0.1.0'
 
 
 
