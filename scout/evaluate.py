@@ -172,6 +172,24 @@ def main(args):
         polish_positions = np.array(cand_positions)[error_probs > args.threshold]
         print_stats(error_positions, polish_positions, cand_positions)
 
+        fig = plt.figure()
+        ax = fig.add_subplot(111)
+        ax.grid(True)
+        ax.set_xlabel('Recall')
+        ax.set_ylabel('Precision')
+        ax.set_xticks(range(0,101,10))
+        ax.set_yticks(range(0,101,10))
+        recall, prec = [], []
+        thresholds = 1 / (1 + np.exp(-np.linspace(-10, 10, 101)))
+        for threshold in thresholds:
+            polish_pos = np.array(cand_positions)[error_probs > threshold]
+            polish_errors, good_polish_pos = count_useful(polish_pos, error_positions)
+            recall.append(100 if not len(error_positions) else polish_errors*100.0 / len(error_positions))
+            prec.append(100 if not len(polish_pos) else good_polish_pos*100.0 / len(polish_pos))
+        ax.plot(recall, prec, label="pileup_scout")
+        ax.legend()
+        fig.savefig(os.path.join(cfg.args.output_dir, "prec_recall.png"))
+
     elif args.method == "pileup":
         # pileup based position selection using error rate and hp length
         polish_positions = get_candidate_positions()
@@ -200,7 +218,6 @@ def main(args):
         model = load_model(args.model_dir, args.device, 
                 weights=int(args.weights), half=args.half)
         error_probs = get_pileup_scout_error_probs(pileup_positions, model, args.device)
-        # sample in range 0-1, but more points near 0 and 1
         thresholds = 1 / (1 + np.exp(-np.linspace(-10, 10, 101)))
         for threshold in thresholds:
             polish_pos = np.array(pileup_positions)[error_probs > threshold]

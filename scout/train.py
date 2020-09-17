@@ -16,10 +16,9 @@ try: from apex import amp
 except ImportError: pass
 
 from scout.util import init, ChunkData, default_config
-from scout.model import Model
+from scout.model import Model, FocalLoss
 
-
-criterion = torch.nn.BCEWithLogitsLoss(pos_weight=torch.FloatTensor([10]).cuda())
+criterion = FocalLoss(apply_nonlin = torch.nn.Sigmoid(), alpha=[1,10], smooth=0.1)
 
 
 
@@ -108,15 +107,21 @@ def main(args):
 
     # load training data into np arrays
     print("> loading training data")
-    blocks = np.load(os.path.join(args.data_dir, "blocks.npy"))
-    targets = np.load(os.path.join(args.data_dir, "targets.npy"))
-    blocks = blocks[:args.max_num_blocks]
-    targets = targets[:args.max_num_blocks].flatten()
+    train_blocks = np.load(os.path.join(args.train_data_dir, "blocks.npy"))
+    train_targets = np.load(os.path.join(args.train_data_dir, "targets.npy"))
+    train_blocks = train_blocks[:args.max_train_blocks]
+    train_targets = train_targets[:args.max_train_blocks].flatten()
+    
+    # load validation data into np arrays
+    print("> loading validation data")
+    val_blocks = np.load(os.path.join(args.val_data_dir, "blocks.npy"))
+    val_targets = np.load(os.path.join(args.val_data_dir, "targets.npy"))
+    val_blocks = val_blocks[:args.max_val_blocks]
+    val_targets = val_targets[:args.max_val_blocks].flatten()
 
     # split into torch-compatible train/test sets
-    split = np.floor(blocks.shape[0] * args.validation_split).astype(np.int32)
-    train_dataset = ChunkData(blocks[:split], targets[:split])
-    test_dataset = ChunkData(blocks[split:], targets[split:])
+    train_dataset = ChunkData(train_blocks, train_targets)
+    test_dataset = ChunkData(val_blocks, val_targets)
     train_loader = torch.utils.data.DataLoader(train_dataset, 
             batch_size=args.batch, shuffle=True, num_workers=4, pin_memory=True)
     test_loader = torch.utils.data.DataLoader(test_dataset, 
@@ -128,14 +133,18 @@ def main(args):
     argsdict = dict(train = vars(args))
 
     # load block config (data_gen parameters)
-    blocks_config = {}
-    blocks_config_file = os.path.join(args.data_dir, 'config.toml')
-    if os.path.isfile(blocks_config_file):
-        blocks_config = toml.load(blocks_config_file)
+    train_config = {}
+    train_config_file = os.path.join(args.train_data_dir, 'config.toml')
+    if os.path.isfile(train_config_file):
+        train_config = toml.load(train_config_file)
+    val_config = {}
+    val_config_file = os.path.join(args.val_data_dir, 'config.toml')
+    if os.path.isfile(val_config_file):
+        val_config = toml.load(val_config_file)
 
     # merge config data and save in training directory
     os.makedirs(workdir, exist_ok=True)
-    toml.dump({**config, **argsdict, **blocks_config}, open(os.path.join(workdir, 'config.toml'), 'w'))
+    toml.dump({**config, **argsdict, **train_config, **val_config}, open(os.path.join(workdir, 'config.toml'), 'w'))
 
     # generate model from config file
     print("> loading model")
@@ -179,9 +188,8 @@ def main(args):
             csvw = csv.writer(csvfile, delimiter=',')
             if epoch == 1:
                 csvw.writerow([
-                    'time', 'duration', 'epoch', 'train_loss',
-                    'validation_loss', 'validation_acc', 
-                    'validation_precision', 'validation_recall'
+                    'time', 'duration', 'epoch', 'train_loss', 'val_loss', 
+                    'val_acc', 'val_precision', 'val_recall'
                 ])
             csvw.writerow([
                 datetime.today(), int(duration), epoch, train_loss, val_loss, val_acc, val_prec, val_rec
@@ -195,15 +203,16 @@ def argparser():
         add_help = False
     )
 
-    parser.add_argument("data_dir", default="")
+    parser.add_argument("train_data_dir", default="")
+    parser.add_argument("val_data_dir", default="")
     parser.add_argument("train_dir", default="training")
 
-    parser.add_argument("--max_num_blocks", default=1000000, type=int)
+    parser.add_argument("--max_train_blocks", default=1000000, type=int)
+    parser.add_argument("--max_val_blocks", default=1000000, type=int)
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--seed", default=25, type=int)
-    parser.add_argument("--validation_split", default=0.97, type=float)
     parser.add_argument("-f", "--force", action="store_true", default=False)
-    parser.add_argument("--batch", default=128, type=int)
+    parser.add_argument("--batch", default=512, type=int)
     parser.add_argument("--config", default=default_config)
     parser.add_argument("--lr", default=1e-3, type=float)
     parser.add_argument("--epochs", default=400, type=int)

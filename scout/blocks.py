@@ -197,6 +197,7 @@ def get_candidate_positions():
 
         if os.path.isfile(candidates_file):
             cand_positions = np.load(candidates_file)
+            print("loaded {} positions".format(len(cand_positions)))
         else:
             print("ERROR: candidates file '{}' does not exist.".format(candidates_file))
             sys.exit(-1)
