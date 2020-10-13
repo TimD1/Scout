@@ -18,7 +18,7 @@ except ImportError: pass
 from scout.util import init, ChunkData, default_config
 from scout.model import Model, FocalLoss
 
-criterion = FocalLoss(apply_nonlin = torch.nn.Sigmoid(), alpha=[1,10], smooth=0.1)
+criterion = FocalLoss(apply_nonlin = torch.nn.Sigmoid(), alpha=[1,50], smooth=0.001)
 
 
 
@@ -95,10 +95,10 @@ def test(model, device, test_loader):
 def main(args):
 
     # check that training directory doesn't exist already
-    workdir = os.path.expanduser(args.train_dir)
-    model_name = os.path.basename(os.path.normpath(args.train_dir))
+    workdir = os.path.expanduser(args.training_dir)
+    model_name = os.path.basename(os.path.normpath(args.training_dir))
     if os.path.exists(workdir) and not args.force:
-        print("ERROR: train_dir '{}' exists, use -f to force training.".format(workdir))
+        print("ERROR: training_dir '{}' exists, use -f to force training.".format(workdir))
         exit(1)
 
     # set device and initialize
@@ -144,7 +144,8 @@ def main(args):
 
     # merge config data and save in training directory
     os.makedirs(workdir, exist_ok=True)
-    toml.dump({**config, **argsdict, **train_config, **val_config}, open(os.path.join(workdir, 'config.toml'), 'w'))
+    toml.dump({**config, **argsdict, **train_config, **val_config}, 
+            open(os.path.join(workdir, 'config.toml'), 'w'))
 
     # generate model from config file
     print("> loading model")
@@ -203,19 +204,25 @@ def argparser():
         add_help = False
     )
 
-    parser.add_argument("train_data_dir", default="")
-    parser.add_argument("val_data_dir", default="")
-    parser.add_argument("train_dir", default="training")
-
-    parser.add_argument("--max_train_blocks", default=1000000, type=int)
-    parser.add_argument("--max_val_blocks", default=1000000, type=int)
-    parser.add_argument("--device", default="cuda")
-    parser.add_argument("--seed", default=25, type=int)
+    # select directories
+    parser.add_argument("training_dir")
+    parser.add_argument("train_data_dir")
+    parser.add_argument("val_data_dir")
     parser.add_argument("-f", "--force", action="store_true", default=False)
+
+    # select data limits
+    parser.add_argument("--max_train_blocks", default=10000000, type=int)
+    parser.add_argument("--max_val_blocks", default=1000000, type=int)
+
+    # model params
     parser.add_argument("--batch", default=512, type=int)
     parser.add_argument("--config", default=default_config)
     parser.add_argument("--lr", default=1e-3, type=float)
     parser.add_argument("--epochs", default=400, type=int)
+
+    # hardware params
+    parser.add_argument("--device", default="cuda")
+    parser.add_argument("--seed", default=25, type=int)
     parser.add_argument("--amp", action="store_true", default=False)
     parser.add_argument("--multi-gpu", action="store_true", default=False)
 
