@@ -156,7 +156,8 @@ def print_stats(error_pos, polish_pos, cand_pos=None):
 def main(args):
 
     validate(args)
-    error_positions = get_error_positions(args.error_catalogue)
+    # actual_positions = get_error_positions(args.error_catalogue)
+    actual_positions = get_variant_positions(args.gold_vcf)
     print("> evaluating '{}'".format(args.method))
 
     if args.method == "scout":
@@ -170,7 +171,7 @@ def main(args):
                 weights=int(args.weights), half=args.half)
         error_probs = get_pileup_scout_error_probs(cand_positions, model, args.device)
         polish_positions = np.array(cand_positions)[error_probs > args.threshold]
-        print_stats(error_positions, polish_positions, cand_positions)
+        print_stats(actual_positions, polish_positions, cand_positions)
 
         fig = plt.figure()
         ax = fig.add_subplot(111)
@@ -183,8 +184,8 @@ def main(args):
         thresholds = 1 / (1 + np.exp(-np.linspace(-10, 10, 101)))
         for threshold in thresholds:
             polish_pos = np.array(cand_positions)[error_probs > threshold]
-            polish_errors, good_polish_pos = count_useful(polish_pos, error_positions)
-            recall.append(100 if not len(error_positions) else polish_errors*100.0 / len(error_positions))
+            polish_errors, good_polish_pos = count_useful(polish_pos, actual_positions)
+            recall.append(100 if not len(actual_positions) else polish_errors*100.0 / len(actual_positions))
             prec.append(100 if not len(polish_pos) else good_polish_pos*100.0 / len(polish_pos))
         ax.plot(recall, prec, label="pileup_scout")
         ax.legend()
@@ -193,12 +194,12 @@ def main(args):
     elif args.method == "pileup":
         # pileup based position selection using error rate and hp length
         polish_positions = get_candidate_positions()
-        print_stats(error_positions, polish_positions)
+        print_stats(actual_positions, polish_positions)
 
     elif args.method == "medaka":
         # choose positions based on medaka's output confidence
         polish_positions = get_medaka_positions(args.medaka_hdf5_out)
-        print_stats(error_positions, polish_positions)
+        print_stats(actual_positions, polish_positions)
 
     elif args.method == "sweep_racon" or args.method == "sweep_medaka":
 
@@ -214,15 +215,15 @@ def main(args):
         print("> now evaluating 'pileup_scout'")
         prec, recall = [], []
         pileup_positions = get_candidate_positions()
-        print_stats(error_positions, pileup_positions)
+        print_stats(actual_positions, pileup_positions)
         model = load_model(args.model_dir, args.device, 
                 weights=int(args.weights), half=args.half)
         error_probs = get_pileup_scout_error_probs(pileup_positions, model, args.device)
         thresholds = 1 / (1 + np.exp(-np.linspace(-10, 10, 101)))
         for threshold in thresholds:
             polish_pos = np.array(pileup_positions)[error_probs > threshold]
-            polish_errors, good_polish_pos = count_useful(polish_pos, error_positions)
-            recall.append(100 if not len(error_positions) else polish_errors*100.0 / len(error_positions))
+            polish_errors, good_polish_pos = count_useful(polish_pos, actual_positions)
+            recall.append(100 if not len(actual_positions) else polish_errors*100.0 / len(actual_positions))
             prec.append(100 if not len(polish_pos) else good_polish_pos*100.0 / len(polish_pos))
         ax.plot(recall, prec, label="pileup_scout")
 
@@ -234,8 +235,8 @@ def main(args):
                 print("iteration {} of {}\r".format(idx+1, len(thresholds)), end="")
                 cfg.args.max_qscore_medaka = threshold
                 polish_pos = get_medaka_positions(args.medaka_hdf5_out)
-                polish_errors, good_polish_pos = count_useful(polish_pos, error_positions)
-                recall.append(100 if not len(error_positions) else polish_errors*100.0 / len(error_positions))
+                polish_errors, good_polish_pos = count_useful(polish_pos, actual_positions)
+                recall.append(100 if not len(actual_positions) else polish_errors*100.0 / len(actual_positions))
                 prec.append(100 if not len(polish_pos) else good_polish_pos*100.0 / len(polish_pos))
             ax.plot(recall, prec, label="medaka")
 
@@ -245,8 +246,8 @@ def main(args):
         for threshold in thresholds:
             cfg.args.pileup_min_error = threshold
             polish_pos = get_candidate_positions()
-            polish_errors, good_polish_pos = count_useful(polish_pos, error_positions)
-            recall.append(100 if not len(error_positions) else polish_errors*100.0 / len(error_positions))
+            polish_errors, good_polish_pos = count_useful(polish_pos, actual_positions)
+            recall.append(100 if not len(actual_positions) else polish_errors*100.0 / len(actual_positions))
             prec.append(100 if not len(polish_pos) else good_polish_pos*100.0 / len(polish_pos))
         ax.plot(recall, prec, label="pileup")
 
@@ -264,10 +265,15 @@ def argparser():
     )
 
     # i/o arguments
-    parser.add_argument("calls_to_draft")
-    parser.add_argument("draft_consensus")
-    parser.add_argument("error_catalogue")
-    parser.add_argument("output_dir")
+    parser.add_argument("--output_dir")
+  
+    # haploid args
+    parser.add_argument("--calls_to_draft")
+    parser.add_argument("--draft_consensus")
+
+    # diploid args
+    parser.add_argument("--diploid")
+    parser.add_argument("--gold_vcf")
 
     # limit search to specific region
     parser.add_argument("--region_contig", default="default",)
@@ -281,7 +287,7 @@ def argparser():
     parser.add_argument("--base_window", default=21, type=int)
     parser.add_argument("--merge_center", default=3, type=int)
     parser.add_argument("--pileup_min_error", default=0.2, type=float)
-    parser.add_argument("--pileup_min_hp", default=5, type=int)
+    parser.add_argument("--pileup_min_hp", default=0, type=int)
     parser.add_argument("--use_existing_candidates", action="store_true")
     parser.add_argument("--max_qscore_medaka", default=15, type=float)
     parser.add_argument("--medaka_hdf5_out")

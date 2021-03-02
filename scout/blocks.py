@@ -14,7 +14,10 @@ def get_pileup_positions(center_col_start):
     '''
 
     # create pysam alignment file
-    calls_to_draft = pysam.AlignmentFile(cfg.args.calls_to_draft, "rb")
+    if not cfg.args.diploid:
+        calls_to_draft = pysam.AlignmentFile(cfg.args.calls_to_draft, "rb")
+    else:
+        calls_to_draft = pysam.AlignmentFile(cfg.args.calls_to_ref, "rb")
 
     # calculate region end
     center_col_end = min(center_col_start + cfg.args.region_batch_size, cfg.args.region_end)
@@ -52,17 +55,20 @@ def get_pileup_positions(center_col_start):
                 continue
 
         # check percentage of reads which err at this position
-        wrong = 0
+        hap_diffs = [0, 0]
+        hap_totals = [0, 0]
         for read in center_col.pileups:
-            ref_base = read.alignment.get_reference_sequence().upper() \
-                    [center_col.pos-read.alignment.reference_start]
-            read_base = 'N' if read.query_position is None else \
-                    read.alignment.query_sequence[read.query_position]
-            if read_base != ref_base or read.indel > 0: 
-                wrong += 1
+            if read.alignment.has_tag('HP'):
+                ref_base = read.alignment.get_reference_sequence().upper() \
+                        [center_col.pos-read.alignment.reference_start]
+                read_base = 'N' if read.query_position is None else \
+                        read.alignment.query_sequence[read.query_position]
+                if read_base != ref_base or read.indel > 0: 
+                    hap_diffs[read.alignment.get_tag('HP')-1] += 1
+                hap_totals[read.alignment.get_tag('HP')-1] += 1
 
         # if low error rate, continue
-        if wrong / float(center_col.nsegments) < cfg.args.pileup_min_error:
+        if calculate_error_rate(hap_diffs, hap_totals) < cfg.args.pileup_min_error:
             with cfg.test_count.get_lock():
                 cfg.test_count.value += 1
                 sys.stderr.write('{} candidates selected, {:010d} of {} tested\r' \
@@ -81,6 +87,19 @@ def get_pileup_positions(center_col_start):
         positions.append(center_col.pos)
 
     return positions
+
+
+
+def calculate_error_rate(hap_diff_counts, hap_total_reads):
+
+    # choose haploid with greatest error rate
+    rate = 0
+    for diff, total in zip(hap_diff_counts, hap_total_reads):
+        # ignore this haploid if zero coverage
+        if total:
+            rate = max(rate, diff/float(total))
+    return rate
+
 
 
 
@@ -217,6 +236,19 @@ def get_candidate_positions():
 
 
 
+def get_variant_positions(vcf_filename, min_qual=0): 
+    '''
+    Parse VCF file and extract relevant positions. 
+    - VCF filename must be zipped (supply <filename>.vcf.gz)
+    - VCF index must be present (<filename>.vcf.gz.tbi) 
+    '''
+    draft_vcf = pysam.VariantFile(vcf_filename, "r") 
+    return [record.start for record in 
+        draft_vcf.fetch(cfg.args.region_contig, \
+        cfg.args.region_start, cfg.args.region_end) if record.qual >= min_qual ] 
+
+
+
 def get_error_positions(error_catalogue):
 
     # parse the error catalogue, creating a list of all SNP positions
@@ -255,7 +287,7 @@ def generate_block(block_center):
 
     # initialize training data block and encoding scheme
     calls_to_draft = pysam.AlignmentFile(cfg.args.calls_to_draft, 'rb')
-    block = np.zeros( (cfg.args.base_window, 8, 4) )
+    block = np.zeros( (cfg.args.base_window, 16, 4) )
     ref_start = block_center - cfg.args.base_radius
     ref_end = ref_start + cfg.args.base_window
     base_idx = {'A': 0, 'C': 1, 'G': 2, 'T': 3}
@@ -271,6 +303,8 @@ def generate_block(block_center):
 
         for read in col.pileups:
             strand_offset = 4 if read.alignment.is_reverse else 0
+            haploid_offset = 8 if read.alignment.has_tag('HP') and read.alignment.get_tag('HP') == 1 else 0
+            origin_offset = strand_offset + haploid_offset
             ref_base = read.alignment.get_reference_sequence().upper() \
                     [col.pos-read.alignment.reference_start]
             read_base = 'N' if read.query_position is None else \
@@ -278,7 +312,7 @@ def generate_block(block_center):
 
             # deletion
             if read_base == 'N':
-                block[pos_offset][base_idx[ref_base] + strand_offset][feat_idx['DEL']] += 1
+                block[pos_offset][base_idx[ref_base] + origin_offset][feat_idx['DEL']] += 1
             else:
 
                 # insertion
@@ -290,13 +324,13 @@ def generate_block(block_center):
                         # only worry about insertions within ROI
                         if pos_offset + ins_offset >= cfg.args.base_window:
                             break
-                        block[pos_offset+ins_offset][base_idx[ins_base]+strand_offset][feat_idx['INS']] += 1
+                        block[pos_offset+ins_offset][base_idx[ins_base]+origin_offset][feat_idx['INS']] += 1
 
                 # substitution or correct
-                block[pos_offset][base_idx[ref_base]  + strand_offset][feat_idx['REF']] += 1
-                block[pos_offset][base_idx[read_base] + strand_offset][feat_idx['INS']] += 1
-                block[pos_offset][base_idx[ref_base]  + strand_offset][feat_idx['DEL']] += 1
-                block[pos_offset][base_idx[read_base] + strand_offset][feat_idx['SUB']] += 1
+                block[pos_offset][base_idx[ref_base]  + origin_offset][feat_idx['REF']] += 1
+                block[pos_offset][base_idx[read_base] + origin_offset][feat_idx['INS']] += 1
+                block[pos_offset][base_idx[ref_base]  + origin_offset][feat_idx['DEL']] += 1
+                block[pos_offset][base_idx[read_base] + origin_offset][feat_idx['SUB']] += 1
 
     # features are relative to reference counts
     for pos in range(cfg.args.base_window):

@@ -90,8 +90,8 @@ def argparser():
 
     # selecting candidate positions
     parser.add_argument("--base_window", default=21, type=int)
-    parser.add_argument("--pileup_min_error", default=0.3, type=float)
-    parser.add_argument("--pileup_min_hp", default=5, type=int)
+    parser.add_argument("--pileup_min_error", default=0.2, type=float)
+    parser.add_argument("--pileup_min_hp", default=0, type=int)
     parser.add_argument("--use_existing_candidates", action="store_true")
 
     # model arguments

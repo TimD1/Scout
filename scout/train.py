@@ -97,8 +97,13 @@ def main(args):
     # check that training directory doesn't exist already
     workdir = os.path.expanduser(args.training_dir)
     model_name = os.path.basename(os.path.normpath(args.training_dir))
+
     if os.path.exists(workdir) and not args.force:
         print("ERROR: training_dir '{}' exists, use -f to force training.".format(workdir))
+        exit(1)
+
+    if args.val_data_dir and args.train_val_split:
+        print("ERROR: must choose separate validation dir OR train-val split")
         exit(1)
 
     # set device and initialize
@@ -106,18 +111,28 @@ def main(args):
     device = torch.device(args.device)
 
     # load training data into np arrays
-    print("> loading training data")
-    train_blocks = np.load(os.path.join(args.train_data_dir, "blocks.npy"))
-    train_targets = np.load(os.path.join(args.train_data_dir, "targets.npy"))
-    train_blocks = train_blocks[:args.max_train_blocks]
-    train_targets = train_targets[:args.max_train_blocks].flatten()
-    
-    # load validation data into np arrays
-    print("> loading validation data")
-    val_blocks = np.load(os.path.join(args.val_data_dir, "blocks.npy"))
-    val_targets = np.load(os.path.join(args.val_data_dir, "targets.npy"))
-    val_blocks = val_blocks[:args.max_val_blocks]
-    val_targets = val_targets[:args.max_val_blocks].flatten()
+    print("> loading data")
+    if args.val_data_dir:
+        train_blocks = np.load(os.path.join(args.train_data_dir, "blocks.npy"))
+        train_targets = np.load(os.path.join(args.train_data_dir, "targets.npy"))
+        train_blocks = train_blocks[:args.max_train_blocks]
+        train_targets = train_targets[:args.max_train_blocks].flatten()
+        
+        val_blocks = np.load(os.path.join(args.val_data_dir, "blocks.npy"))
+        val_targets = np.load(os.path.join(args.val_data_dir, "targets.npy"))
+        val_blocks = val_blocks[:args.max_val_blocks]
+        val_targets = val_targets[:args.max_val_blocks].flatten()
+
+    else:
+        all_blocks = np.load(os.path.join(args.train_data_dir, "blocks.npy"))
+        all_targets = np.load(os.path.join(args.train_data_dir, "targets.npy"))
+        nblocks = min(len(all_targets), args.max_train_blocks)
+        split = np.floor(nblocks * args.train_val_split).astype(np.int32)
+
+        train_blocks = all_blocks[:split]
+        train_targets = all_targets[:split]
+        val_blocks = all_blocks[split:]
+        val_targets = all_targets[split:]
 
     # split into torch-compatible train/test sets
     train_dataset = ChunkData(train_blocks, train_targets)
@@ -138,9 +153,10 @@ def main(args):
     if os.path.isfile(train_config_file):
         train_config = toml.load(train_config_file)
     val_config = {}
-    val_config_file = os.path.join(args.val_data_dir, 'config.toml')
-    if os.path.isfile(val_config_file):
-        val_config = toml.load(val_config_file)
+    if args.val_data_dir:
+        val_config_file = os.path.join(args.val_data_dir, 'config.toml')
+        if os.path.isfile(val_config_file):
+            val_config = toml.load(val_config_file)
 
     # merge config data and save in training directory
     os.makedirs(workdir, exist_ok=True)
@@ -207,7 +223,8 @@ def argparser():
     # select directories
     parser.add_argument("training_dir")
     parser.add_argument("train_data_dir")
-    parser.add_argument("val_data_dir")
+    parser.add_argument("--val_data_dir")
+    parser.add_argument("--train_val_split", type=float, default=0.97)
     parser.add_argument("-f", "--force", action="store_true", default=False)
 
     # select data limits
