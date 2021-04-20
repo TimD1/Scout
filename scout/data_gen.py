@@ -39,7 +39,7 @@ def validate(args):
 
     # set region to search for errors, ignoring genome start/end
     args.base_radius = (args.base_window-1) // 2
-    genome_end = len(get_fasta(args.draft_consensus))
+    genome_end = len(get_fasta(args.draft_consensus, args.region_contig))
     if not args.region_end:
         args.region_end = genome_end - args.base_radius
     args.region_end = min(args.region_end, genome_end - args.base_radius)
@@ -97,7 +97,7 @@ def argparser():
     parser.add_argument("--error_catalogue")
 
     # parameters for training dataset
-    parser.add_argument("--base_window", default=21, type=int)
+    parser.add_argument("--base_window", default=41, type=int)
     parser.add_argument("--max_num_blocks", default=100000, type=int)
     parser.add_argument("--max_error_ratio", default=20, type=int)
 

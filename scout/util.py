@@ -4,6 +4,7 @@ Scout utility functions.
 
 import os, random, torch, toml, re
 import numpy as np
+from Bio import SeqIO
 from glob import glob
 from collections import OrderedDict
 
@@ -12,14 +13,11 @@ from scout.model import Model
 __dir__ = os.path.dirname(os.path.realpath(__file__))
 __models__ = os.path.join(__dir__, "models")
 __configs__ = os.path.join(__models__, "configs")
-default_config = os.path.join(__configs__, "dna_r941_21bp.toml")
+default_config = os.path.join(__configs__, "dna_r941_41bp.toml")
 
 
-def get_fasta(ref_fasta):
-    ''' Get length of sequence in FASTA file. '''
-    with open(ref_fasta, 'r') as fasta:
-        return ''.join(fasta.read().split('\n')[1:])
-
+def get_fasta(reference, contig):
+    return SeqIO.to_dict(SeqIO.parse(reference, "fasta"))[contig].seq[:]
 
 
 def init(seed, device):

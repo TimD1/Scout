@@ -35,7 +35,7 @@ def validate(args):
 
     # set region to search for errors, ignoring genome start/end
     args.base_radius = (args.base_window-1) // 2
-    genome_end = len(get_fasta(args.draft_consensus))
+    genome_end = len(get_fasta(args.draft_consensus, args.region_contig))
     if not args.region_end:
         args.region_end = genome_end - args.base_radius
     args.region_end = min(args.region_end, genome_end - args.base_radius)
@@ -284,7 +284,7 @@ def argparser():
 
     # selecting candidate positions
     parser.add_argument("--method", default="pileup_scout")
-    parser.add_argument("--base_window", default=21, type=int)
+    parser.add_argument("--base_window", default=41, type=int)
     parser.add_argument("--merge_center", default=3, type=int)
     parser.add_argument("--pileup_min_error", default=0.2, type=float)
     parser.add_argument("--pileup_min_hp", default=0, type=int)
@@ -293,7 +293,7 @@ def argparser():
     parser.add_argument("--medaka_hdf5_out")
 
     # model arguments
-    parser.add_argument("--model_dir", default="dna_r941_21bp")
+    parser.add_argument("--model_dir", default="dna_r941_41bp")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--seed", default=42, type=int)
     parser.add_argument("--batch_size", default=32, type=int)
