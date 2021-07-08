@@ -105,6 +105,7 @@ def main(args):
     if args.val_data_dir and args.train_val_split:
         print("ERROR: must choose separate validation dir OR train-val split")
         exit(1)
+    args.routine = "train"
 
     # set device and initialize
     init(args.seed, args.device)

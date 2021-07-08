@@ -41,6 +41,7 @@ def validate(args):
     args.region_start = max(args.region_start, args.base_radius)
 
     os.makedirs(args.output_dir, exist_ok=True)
+    args.routine = "find"
     cfg.args = args
 
 
@@ -51,21 +52,41 @@ def main(args):
     validate(args)
 
     # load model from disk
-    model = load_model(args.model_dir, args.device, 
-            weights=int(args.weights), half=args.half)
+    cfg.model = load_model(args.model_dir, args.device, 
+            weights=int(args.weights))
 
-    # pre-filtering using basic pileup heuristics
-    cand_positions = get_candidate_positions()
+    if not args.load_blocks:
+        # pre-filtering using basic pileup heuristics
+        cand_positions = get_candidate_positions()
+
+        # generate all candidate blocks and merge
+        print("> generating blocks")
+        with mp.Pool() as pool:
+            blocks = pool.map(generate_block, cand_positions)
+        blocks = np.vstack(blocks)
+        np.save(f'{args.output_dir}/blocks', blocks)
+
+    else: # load blocks
+        print("> loading blocks")
+        cand_positions = np.load(f'{args.output_dir}/candidates.npy')
+        blocks = np.load(f'{args.output_dir}/blocks.npy')
+        print(f"{len(cand_positions)} blocks loaded")
 
     # use model to select positions to polish
-    error_probs = get_pileup_scout_error_probs(cand_positions, model, args.device)
-    chosen_positions = np.array(cand_positions)[error_probs > args.threshold]
+    print("> calling blocks -> scores")
+    scores = get_scout_scores(blocks)
 
-    print("\n> saving results")
-    argsdict = dict(find = vars(args))
-    train_config = toml.load(os.path.join(args.model_dir, "config.toml"))
-    toml.dump({**argsdict, **train_config}, open(os.path.join(args.output_dir, "config.toml"), "w"))
+    print("\n> saving scores")
+    np.save(f'{args.output_dir}/scores', scores)
+
+    print("> selecting positions")
+    chosen_positions = np.array(cand_positions)[scores > args.threshold]
     np.save(os.path.join(args.output_dir, "positions"), chosen_positions)
+
+    print("> saving metadata")
+    argsdict = dict(find = vars(args))
+    train_config = toml.load(f"{args.model_dir}/config.toml")
+    toml.dump({**argsdict, **train_config}, open(f"{args.output_dir}/config.toml", "w"))
 
 
 
@@ -92,7 +113,8 @@ def argparser():
     parser.add_argument("--base_window", default=41, type=int)
     parser.add_argument("--pileup_min_error", default=0.2, type=float)
     parser.add_argument("--pileup_min_hp", default=0, type=int)
-    parser.add_argument("--use_existing_candidates", action="store_true")
+    parser.add_argument("--load_candidates", action="store_true")
+    parser.add_argument("--load_blocks", action="store_true")
 
     # model arguments
     parser.add_argument("--model_dir", default="dna_r941_41bp")
@@ -101,6 +123,5 @@ def argparser():
     parser.add_argument("--batch_size", default=32, type=int)
     parser.add_argument("--weights", default="0", type=str)
     parser.add_argument("--threshold", default=0.5, type=float)
-    parser.add_argument("--half", action="store_true", default=False)
 
     return parser

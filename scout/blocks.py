@@ -14,10 +14,7 @@ def get_pileup_positions(center_col_start):
     '''
 
     # create pysam alignment file
-    if not cfg.args.diploid:
-        calls_to_draft = pysam.AlignmentFile(cfg.args.calls_to_draft, "rb")
-    else:
-        calls_to_draft = pysam.AlignmentFile(cfg.args.calls_to_ref, "rb")
+    calls_to_draft = pysam.AlignmentFile(cfg.args.calls_to_draft, "rb")
 
     # calculate region end
     center_col_end = min(center_col_start + cfg.args.region_batch_size, cfg.args.region_end)
@@ -48,9 +45,9 @@ def get_pileup_positions(center_col_start):
                     cfg.cand_count.value += 1
                 with cfg.test_count.get_lock(): 
                     cfg.test_count.value += 1
-                    sys.stderr.write('{} candidates selected, {:010d} of {} tested\r' \
+                    print('{} candidates selected, {:010d} of {} tested\r' \
                             .format(cfg.cand_count.value, cfg.test_count.value,
-                                    cfg.args.region_end-cfg.args.region_start))
+                                    cfg.args.region_end-cfg.args.region_start), end="", flush=True)
                 positions.append(center_col.pos)
                 continue
 
@@ -71,9 +68,9 @@ def get_pileup_positions(center_col_start):
         if calculate_error_rate(hap_diffs, hap_totals) < cfg.args.pileup_min_error:
             with cfg.test_count.get_lock():
                 cfg.test_count.value += 1
-                sys.stderr.write('{} candidates selected, {:010d} of {} tested\r' \
+                print('{} candidates selected, {:010d} of {} tested\r' \
                         .format(cfg.cand_count.value, cfg.test_count.value, 
-                            cfg.args.region_end-cfg.args.region_start))
+                            cfg.args.region_end-cfg.args.region_start), end="", flush=True)
             continue
 
         # passed min error threshold, update number of candidates selected
@@ -81,9 +78,9 @@ def get_pileup_positions(center_col_start):
             cfg.cand_count.value += 1
         with cfg.test_count.get_lock(): 
             cfg.test_count.value += 1
-            sys.stderr.write('{} candidates selected, {:010d} of {} tested\r' \
+            print('{} candidates selected, {:010d} of {} tested\r' \
                     .format(cfg.cand_count.value, cfg.test_count.value,
-                            cfg.args.region_end-cfg.args.region_start))
+                            cfg.args.region_end-cfg.args.region_start), end="", flush=True)
         positions.append(center_col.pos)
 
     return positions
@@ -209,7 +206,7 @@ def get_candidate_positions():
     cand_positions = None
     cfg.cand_count.value = 0
     cfg.test_count.value = 0
-    if cfg.args.use_existing_candidates:
+    if cfg.args.load_candidates:
 
         print("> loading candidate pileup positions")
         candidates_file = os.path.join(cfg.args.output_dir, 'candidates.npy')
@@ -341,7 +338,7 @@ def generate_block(block_center):
 
     with cfg.pos_count.get_lock(): 
         cfg.pos_count.value += 1
-        sys.stderr.write('{} blocks generated\r'.format(cfg.pos_count.value))
+        print('{} blocks generated\r'.format(cfg.pos_count.value), end="", flush=True)
 
     return block[np.newaxis,:]
 
@@ -381,38 +378,25 @@ def generate_training_data(cand_positions, error_positions):
 
 
 
-def get_pileup_scout_error_probs(cand_positions, model, device):
-
-    # initialize device and model
-    model.eval()
-    init(cfg.args.seed, device)
-    device = torch.device(device)
-    dtype = np.float16 if cfg.args.half else np.float32
-
-    # generate all candidate blocks and merge
-    print("> generating blocks")
-    with mp.Pool() as pool:
-        cand_blocks = pool.map(generate_block, cand_positions)
-    cand_blocks = np.vstack([block.astype(dtype) for block in cand_blocks])
+def get_scout_scores(blocks):
 
     # chunk all blocks in to batches
-    data = ChunkBlock(cand_blocks)
+    data = ChunkBlock(blocks)
     data_loader = torch.utils.data.DataLoader(
             data, batch_size = cfg.args.batch_size,
             shuffle=False, num_workers=4, pin_memory=True
     )
 
     # determine whether candidates are worth polishing
-    print("\n> calling blocks")
-    results = np.zeros(len(cand_positions))
+    scores = np.zeros(len(blocks))
     called = 0
     with torch.no_grad():
         for block in data_loader:
-            block = block.to(device)
-            result = model(block)
-            results[called:called+len(block)] = \
+            block = block.half().to(cfg.args.device)
+            result = cfg.model(block)
+            scores[called:called+len(block)] = \
                     torch.sigmoid(result).cpu().numpy().flatten()
             called += len(block)
-            print("{} blocks called\r".format(called), end="")
+            print("{} blocks called\r".format(called), end="", flush=True)
 
-    return results
+    return scores

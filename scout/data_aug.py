@@ -19,6 +19,7 @@ def match(mylist):
 def main(args):
 
     # print information on number of generated blocks
+    args.routine = "data_aug"
     print('> selecting up to {} blocks (each) from {} directories'.format( \
             args.max_blocks_each, len(args.input_dirs.split(','))))
 

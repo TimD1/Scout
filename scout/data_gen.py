@@ -46,6 +46,7 @@ def validate(args):
     args.region_start = max(args.region_start, args.base_radius)
 
     os.makedirs(args.output_dir, exist_ok=True)
+    args.routine = "data_gen"
     cfg.args = args
 
 
@@ -70,9 +71,9 @@ def main(args):
     # save training dataset
     print("\n> saving training data")
     argsdict = dict(data_gen = vars(args))
-    toml.dump({**argsdict}, open(os.path.join(args.output_dir, 'config.toml'), 'w'))
-    np.save(os.path.join(args.output_dir, 'blocks'), blocks)
-    np.save(os.path.join(args.output_dir, 'targets'), targets)
+    toml.dump({**argsdict}, open(f'{args.output_dir}/config.toml', 'w'))
+    np.save(f'{args.output_dir}/blocks', blocks)
+    np.save(f'{args.output_dir}/targets', targets)
 
 
 
@@ -89,7 +90,6 @@ def argparser():
 
     # diploid arguments
     parser.add_argument("--gold_vcf")
-    parser.add_argument("--diploid")
 
     # haploid arguments
     parser.add_argument("--calls_to_draft")
@@ -110,7 +110,7 @@ def argparser():
     # selecting candidate positions
     parser.add_argument("--pileup_min_error", default=0.2, type=float)
     parser.add_argument("--pileup_min_hp", default=0, type=int)
-    parser.add_argument("--use_existing_candidates", action="store_true")
+    parser.add_argument("--load_candidates", action="store_true")
 
     # selecting polish positions
     parser.add_argument("--max_error_size", default=5, type=int)

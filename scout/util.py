@@ -17,7 +17,7 @@ default_config = os.path.join(__configs__, "dna_r941_41bp.toml")
 
 
 def get_fasta(reference, contig):
-    return SeqIO.to_dict(SeqIO.parse(reference, "fasta"))[contig].seq[:]
+    return str(SeqIO.to_dict(SeqIO.parse(reference, "fasta"))[contig].seq[:])
 
 
 def init(seed, device):
@@ -58,7 +58,7 @@ class ChunkBlock:
 
 
 
-def load_model(dirname, device, weights=None, half=False):
+def load_model(dirname, device, weights=None):
 
     print("> loading model")
 
@@ -88,7 +88,7 @@ def load_model(dirname, device, weights=None, half=False):
     model.load_state_dict(new_state_dict)
 
     # send model to device for inference
-    if half: model = model.half()
     model.eval()
+    model.half()
     model.to(device)
     return model

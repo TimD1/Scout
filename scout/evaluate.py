@@ -22,6 +22,7 @@ except: import scout.config as cfg
 def validate(args):
 
     print("> processing command-line arguments")
+    args.routine = "evaluate"
 
     # check that alignment file exists
     if not os.path.isfile(args.calls_to_draft):
@@ -165,12 +166,38 @@ def main(args):
         print("WARNING: not implemented yet...")
 
     elif args.method == "pileup_scout":
+
         # scout with pileup pre-filtering
-        cand_positions = get_candidate_positions()
-        model = load_model(args.model_dir, args.device, 
-                weights=int(args.weights), half=args.half)
-        error_probs = get_pileup_scout_error_probs(cand_positions, model, args.device)
-        polish_positions = np.array(cand_positions)[error_probs > args.threshold]
+        print("> loading model")
+        cfg.model = load_model(args.model_dir, args.device, 
+                weights=int(args.weights))
+
+        if not args.load_blocks:
+            # pre-filtering using basic pileup heuristics
+            cand_positions = get_candidate_positions()
+
+            # generate all candidate blocks and merge
+            print("> generating blocks")
+            with mp.Pool() as pool:
+                blocks = pool.map(generate_block, cand_positions)
+            blocks = np.vstack(blocks)
+            np.save(f'{args.output_dir}/blocks', blocks)
+
+        else:
+            print("> loading blocks")
+            cand_positions = np.load(f'{args.output_dir}/candidates.npy')
+            blocks = np.load(f'{args.output_dir}/blocks.npy')
+            print(f"{len(cand_positions)} blocks loaded")
+
+        print("> calling blocks -> scores")
+        scores = get_scout_scores(blocks)
+
+        print("\n> saving scores")
+        np.save(f'{args.output_dir}/scores', scores)
+
+        print("> selecting positions")
+        polish_positions = np.array(cand_positions)[scores > args.threshold]
+        np.save(os.path.join(args.output_dir, "positions"), polish_positions)
         print_stats(actual_positions, polish_positions, cand_positions)
 
         fig = plt.figure()
@@ -183,7 +210,7 @@ def main(args):
         recall, prec = [], []
         thresholds = 1 / (1 + np.exp(-np.linspace(-10, 10, 101)))
         for threshold in thresholds:
-            polish_pos = np.array(cand_positions)[error_probs > threshold]
+            polish_pos = np.array(cand_positions)[scores > threshold]
             polish_errors, good_polish_pos = count_useful(polish_pos, actual_positions)
             recall.append(100 if not len(actual_positions) else polish_errors*100.0 / len(actual_positions))
             prec.append(100 if not len(polish_pos) else good_polish_pos*100.0 / len(polish_pos))
@@ -214,14 +241,35 @@ def main(args):
 
         print("> now evaluating 'pileup_scout'")
         prec, recall = [], []
-        pileup_positions = get_candidate_positions()
-        print_stats(actual_positions, pileup_positions)
-        model = load_model(args.model_dir, args.device, 
-                weights=int(args.weights), half=args.half)
-        error_probs = get_pileup_scout_error_probs(pileup_positions, model, args.device)
+
+        cand_positions = get_candidate_positions()
+        print_stats(actual_positions, cand_positions)
+        cfg.model = load_model(args.model_dir, args.device, 
+                weights=int(args.weights))
+
+        if not args.load_blocks:
+            # pre-filtering using basic pileup heuristics
+            cand_positions = get_candidate_positions()
+
+            # generate all candidate blocks and merge
+            print("> generating blocks")
+            with mp.Pool() as pool:
+                blocks = pool.map(generate_block, cand_positions)
+            blocks = np.vstack(blocks)
+            np.save(f'{args.output_dir}/blocks', blocks)
+
+        else: # load blocks
+            print("> loading blocks")
+            cand_positions = np.load(f'{args.output_dir}/candidates.npy')
+            blocks = np.load(f'{args.output_dir}/blocks.npy')
+            print(f"{len(cand_positions)} blocks loaded")
+
+        print("> calling blocks -> scores")
+        scores = get_scout_scores(blocks)
+
         thresholds = 1 / (1 + np.exp(-np.linspace(-10, 10, 101)))
         for threshold in thresholds:
-            polish_pos = np.array(pileup_positions)[error_probs > threshold]
+            polish_pos = np.array(cand_positions)[scores > threshold]
             polish_errors, good_polish_pos = count_useful(polish_pos, actual_positions)
             recall.append(100 if not len(actual_positions) else polish_errors*100.0 / len(actual_positions))
             prec.append(100 if not len(polish_pos) else good_polish_pos*100.0 / len(polish_pos))
@@ -272,7 +320,6 @@ def argparser():
     parser.add_argument("--draft_consensus")
 
     # diploid args
-    parser.add_argument("--diploid")
     parser.add_argument("--gold_vcf")
 
     # limit search to specific region
@@ -288,7 +335,7 @@ def argparser():
     parser.add_argument("--merge_center", default=3, type=int)
     parser.add_argument("--pileup_min_error", default=0.2, type=float)
     parser.add_argument("--pileup_min_hp", default=0, type=int)
-    parser.add_argument("--use_existing_candidates", action="store_true")
+    parser.add_argument("--load_candidates", action="store_true")
     parser.add_argument("--max_qscore_medaka", default=15, type=float)
     parser.add_argument("--medaka_hdf5_out")
 
@@ -299,6 +346,5 @@ def argparser():
     parser.add_argument("--batch_size", default=32, type=int)
     parser.add_argument("--weights", default="0", type=str)
     parser.add_argument("--threshold", default=0.5, type=float)
-    parser.add_argument("--half", action="store_true", default=False)
 
     return parser

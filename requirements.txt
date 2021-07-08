@@ -1,5 +1,5 @@
 tqdm==4.31.1
-torch==1.4.0
+torch
 pysam>=0.16.0.1
 matplotlib>=3.3.1
 toml==0.10.0
